@@ -1,13 +1,17 @@
 /**
  * TursoClient — HTTP-based client for Turso/libSQL using the /v2/pipeline API.
  *
+ * ⚠️ v1 STATUS: nothing initializes this client. Every credential source was
+ * removed (settings fields, Settings UI inputs, build-time env fallback) after
+ * a read-write token shipped inside release bundles — any client-held Turso
+ * credential is extractable from the built app. isTursoReady() is therefore
+ * always false in v1 and all consumers degrade gracefully (Option B — see
+ * GOAL_PROMPT_NOTES.md). Post-v1, deals/prices return via a narrow relay-side
+ * endpoint; do NOT reintroduce a client-side credential path here.
+ *
  * No native dependencies. Works in React Native via plain fetch().
  *
  * API reference: https://docs.turso.tech/sdk/http
- *
- * Usage:
- *   const client = new TursoClient({ url: DB_URL, token: DB_TOKEN });
- *   const rows = await client.execute("SELECT * FROM products WHERE barcode = ?", [barcode]);
  */
 
 // ─── Types ───────────────────────────────────────────────────────────────────

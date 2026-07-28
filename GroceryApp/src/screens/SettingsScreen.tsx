@@ -863,34 +863,18 @@ export default function SettingsScreen({ navigation }: Props) {
           </View>
         </View>
 
-        {/* ── Turso Database (for Flipp Deal Matching & Products) ───────── */}
+        {/* ── Flipp Deal Matching ─────────────────────────────────────────
+            The Turso URL/token inputs and enabled toggle that used to live
+            here were removed for v1: a user-pasted database credential is a
+            client-held secret, and the Turso-backed deals/price surfaces are
+            gated off entirely (Option B — see GOAL_PROMPT_NOTES.md). Only the
+            non-credential FSA and flyer-scan preferences remain. */}
         <View style={[styles.section, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Flipp Deal Matching</Text>
           <Text style={[styles.sectionDescription, { color: theme.secondaryText }]}>
-            Connect a Turso database to power deal-matched shopping. Your FSA
-            (first 3 characters of your postal code) determines which local
-            flyer deals to use.
+            Your FSA (first 3 characters of your postal code) determines which
+            local flyer deals to use.
           </Text>
-
-          <SettingsRow
-            label="Turso URL"
-            value={settings.tursoUrl}
-            onChangeText={(v) => handleUpdate({ tursoUrl: v })}
-            placeholder="https://your-database.turso.io"
-            keyboardType="url"
-            theme={theme}
-            isDark={isDark}
-          />
-
-          <SettingsRow
-            label="Turso Token"
-            value={settings.tursoToken}
-            onChangeText={(v) => handleUpdate({ tursoToken: v })}
-            placeholder="eyJ... (JWT token)"
-            secureTextEntry
-            theme={theme}
-            isDark={isDark}
-          />
 
           <SettingsRow
             label="Your FSA (postal code prefix)"
@@ -905,13 +889,6 @@ export default function SettingsScreen({ navigation }: Props) {
             label="Flipp Flyer Deals"
             value={settings.flyerScanEnabled ?? false}
             onValueChange={(v) => handleUpdate({ flyerScanEnabled: v })}
-            theme={theme}
-          />
-
-          <ToggleRow
-            label="Turso Enabled"
-            value={settings.tursoEnabled ?? false}
-            onValueChange={(v) => handleUpdate({ tursoEnabled: v })}
             theme={theme}
           />
         </View>

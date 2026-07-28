@@ -195,12 +195,11 @@ export interface AppSettings {
   poolUrl?: string;
 
   // ─── Turso (Product Database) ────────────────────────────────────────────
-  /** Turso database URL (https://<db>-<org>.turso.io) */
-  tursoUrl?: string;
-  /** Turso database API token */
-  tursoToken?: string;
-  /** Whether the Turso product DB is connected */
-  tursoEnabled?: boolean;
+  // The Turso url/token/enabled fields were removed for v1: a client-held
+  // Turso credential is extractable from any built app, so no client-side
+  // path may hold one (see GOAL_PROMPT_NOTES.md, Option B decision).
+  // initSettings() strips these fields from settings already persisted on
+  // device. Post-v1, deals/prices return via a relay-side endpoint instead.
   /** FSA (Forward Sortation Area) for Flipp deal matching (e.g. "L0R") */
   flippFsa?: string;
   /** Whether Sentry crash reporting is enabled (default: true) */

@@ -137,8 +137,11 @@ export class FlippDealsAdapter implements PriceAdapter {
 
   isAvailable(): boolean {
     const settings = getSettings();
-    // Available if Turso is fully configured, or if flyer scan is enabled (will use crowd-sourced fallback)
-    return !!(settings.flyerScanEnabled || (settings.tursoEnabled && settings.tursoUrl && settings.tursoToken));
+    // The Turso credential path was removed for v1 (Option B — see
+    // GOAL_PROMPT_NOTES.md): availability now depends only on the flyer-scan
+    // opt-in. With Turso never initialized, fetchDealsForFSA() returns [] and
+    // this adapter yields no results — the crowd-sourced fallback still works.
+    return !!settings.flyerScanEnabled;
   }
 
   /**

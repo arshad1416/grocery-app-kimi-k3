@@ -18,8 +18,8 @@
 
 | File | Change |
 |------|--------|
-| `src/types/index.ts` | Added `tursoUrl`, `tursoToken`, `tursoEnabled` to AppSettings |
-| `App.tsx` | Adds Turso init after device identity setup |
+| `src/types/index.ts` | ~~Added Turso url/token/enabled to AppSettings~~ **Removed in v1** — client-held Turso credentials are extractable from the built app (see GOAL_PROMPT_NOTES.md) |
+| `App.tsx` | ~~Adds Turso init after device identity setup~~ **Removed in v1** — Turso is never initialized client-side |
 | `src/screens/AddItemSheet.tsx` | Scan button, scanner overlay, lookup, new-product form |
 
 ---

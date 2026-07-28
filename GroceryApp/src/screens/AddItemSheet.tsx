@@ -385,6 +385,15 @@ export default function AddItemSheet({
     if (!scanResult?.barcode || !newProductName.trim()) return;
     setAdding(true);
     try {
+      const { isTursoReady } = await import('../services/tursoClient');
+      if (!isTursoReady()) {
+        // The community product DB (Turso) is gated off in v1 — no client
+        // credential path exists (see GOAL_PROMPT_NOTES.md). Keep the typed
+        // name locally so the item can still be added to the list.
+        setCustomName(newProductName.trim());
+        setShowNewProductForm(false);
+        return;
+      }
       // Persist the new product to Turso so future scans find it
       const cleaned = await submitNewProduct({
         barcode: scanResult.barcode,

@@ -13,6 +13,15 @@ import { themeColors } from './groceryTheme';
 
 export type TabName = 'home' | 'lists' | 'scan' | 'deals' | 'account';
 
+/**
+ * The Deals tab is Turso-backed (flyer deals queried from a Turso database).
+ * v1 ships with the Turso surface gated off entirely — no client credential
+ * path exists (Option B — see GOAL_PROMPT_NOTES.md), so the tab would only
+ * ever show an unconfigurable empty state. Re-enable when deals return via
+ * a relay-side endpoint post-v1.
+ */
+export const DEALS_TAB_ENABLED = false;
+
 interface TabConfig {
   name: TabName;
   label: string;
@@ -24,7 +33,9 @@ const TABS: TabConfig[] = [
   { name: 'home', label: 'Home', icon: 'home-outline', iconFocused: 'home' },
   { name: 'lists', label: 'Lists', icon: 'list-outline', iconFocused: 'list' },
   { name: 'scan', label: 'Scan', icon: 'scan-outline', iconFocused: 'scan' },
-  { name: 'deals', label: 'Deals', icon: 'pricetag-outline', iconFocused: 'pricetag' },
+  ...(DEALS_TAB_ENABLED
+    ? [{ name: 'deals', label: 'Deals', icon: 'pricetag-outline', iconFocused: 'pricetag' } as TabConfig]
+    : []),
   { name: 'account', label: 'Account', icon: 'person-outline', iconFocused: 'person' },
 ];
 

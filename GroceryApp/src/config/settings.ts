@@ -45,7 +45,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   voiceInputEnabled: false,
   barcodeScanningEnabled: false,
   flyerScanEnabled: true,
-  tursoEnabled: true,
   cloudFlyerEnabled: false,
   contributeEnabled: false,
   contributeStoreGranularity: 'region',
@@ -130,6 +129,25 @@ async function loadSettingsFromStore(): Promise<AppSettings | null> {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
+ * Strip removed Turso fields from a settings object loaded from disk.
+ * The turso URL/token fields are credentials and must not survive on device;
+ * the turso enabled flag is the switch that activated them. All were removed
+ * from AppSettings for v1 (see GOAL_PROMPT_NOTES.md, Option B decision), so
+ * every `turso*` key is purged. Returns true if anything was stripped, so
+ * the caller knows to re-persist the cleaned object.
+ */
+function stripRemovedFields(settings: Record<string, unknown>): boolean {
+  let stripped = false;
+  for (const key of Object.keys(settings)) {
+    if (key.startsWith('turso')) {
+      delete settings[key];
+      stripped = true;
+    }
+  }
+  return stripped;
+}
+
+/**
  * Initialize the settings store. Must be called once at app startup.
  * Loads settings from secure store into cache, or populates defaults.
  */
@@ -138,7 +156,13 @@ export async function initSettings(): Promise<AppSettings> {
   console.log('[settings] Loading settings from secure store…');
   const loaded = await loadSettingsFromStore();
   if (loaded) {
+    // Migration: purge Turso credentials persisted by earlier versions.
+    const migrated = stripRemovedFields(loaded as unknown as Record<string, unknown>);
     settingsCache = { ...DEFAULT_SETTINGS, ...loaded };
+    if (migrated) {
+      await persistSettings(settingsCache);
+      console.log('[settings] ✓ Purged removed Turso fields from stored settings');
+    }
     console.log('[settings] ✓ Settings loaded (merged with defaults)');
     return { ...settingsCache };
   }

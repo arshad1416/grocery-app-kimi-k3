@@ -134,25 +134,18 @@ function App() {
         const device = await import('./src/identity/device');
         await device.initDeviceIdentity();
 
-        // Init settings store (loads from SecureStore → populates cache)
-        const { initSettings, getSettings } = await import('./src/config/settings');
+        // Init settings store (loads from SecureStore → populates cache).
+        // Also purges any Turso credentials persisted by earlier versions.
+        const { initSettings } = await import('./src/config/settings');
         await initSettings();
 
-        // Init Turso if configured. Credentials come from user settings or
-        // EXPO_PUBLIC_* build-time env — NEVER hardcode tokens here: a
-        // read-write JWT was previously committed in this file; treat it as
-        // compromised and rotate it (see GOAL_PROMPT_NOTES.md).
-        try {
-          const { initTurso } = await import('./src/services/tursoClient');
-          const settings = getSettings();
-          const tursoUrl = settings.tursoUrl || process.env.EXPO_PUBLIC_TURSO_URL;
-          const tursoToken = settings.tursoToken || process.env.EXPO_PUBLIC_TURSO_TOKEN;
-          if (tursoUrl && tursoToken) {
-            initTurso({ url: tursoUrl, token: tursoToken });
-          }
-        } catch (e) {
-          console.warn('[init] Turso init failed:', e);
-        }
+        // Turso is NOT initialized in v1. A read-write JWT was previously
+        // committed in this file, and the later env-var fallback shipped the
+        // same credential inside every release bundle. Any client-held Turso
+        // credential is extractable from the built app, so v1 ships with the
+        // Turso-backed deals/price surfaces gated off entirely (Option B —
+        // see GOAL_PROMPT_NOTES.md). Post-v1 these features return through a
+        // narrow relay-side endpoint whose credential never leaves the server.
 
         // Restore persisted lists into Yjs and connect family sync (if
         // enrolled). Without this call nothing ever hydrated from
@@ -165,10 +158,9 @@ function App() {
           console.warn('[init] Sync bootstrap failed:', e);
         }
 
-        // Fire-and-forget: fetch remote store branding from Turso
-        import('./src/pricing/store-branding')
-          .then(({ fetchStoreBranding }) => fetchStoreBranding())
-          .catch(() => {});
+        // Store branding comes from the static fallback maps in
+        // src/pricing/store-branding.ts; the remote (Turso-backed) branding
+        // fetch is gated off in v1 along with the rest of the Turso surface.
 
         // Init Sentry (respects user's sentryEnabled opt-out)
         try {
