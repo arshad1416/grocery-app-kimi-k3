@@ -33,7 +33,7 @@ async function getSodium(): Promise<any> {
 
 // ─── Notification Channel (Android) ──────────────────────────────────────────
 
-const NOTIFICATION_CHANNEL_ID = 'stophop-family';
+const NOTIFICATION_CHANNEL_ID = 'pantryrun-family';
 
 async function ensureNotificationChannel(): Promise<void> {
   if (Platform.OS === 'android') {

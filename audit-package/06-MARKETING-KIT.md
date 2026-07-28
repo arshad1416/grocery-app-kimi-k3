@@ -1,4 +1,4 @@
-# StopHop — Marketing Kit
+# PantryRun — Marketing Kit
 
 Copy claims only shipped v1 features (no Alexa/Google Assistant, no managed
 plan — both hidden in v1). Siri, price comparison, and the trip optimizer are
@@ -12,7 +12,7 @@ existing photo works — so the copy below says "Add a photo" rather than
 ## 1. Store-listing copy
 
 ### Apple App Store
-- **Name (≤30):** `StopHop: Family Grocery List` *(28 chars)*
+- **Name (≤30):** `PantryRun: Family Grocery List` *(28 chars)*
 - **Subtitle (≤30):** `Private shared lists & prices` *(29 chars)*
 - **Promotional text (≤170):**
   `Your family's grocery list, end-to-end encrypted. Compare local prices, scan store flyers, and find which stores save you the most — without giving up your data.`
@@ -20,7 +20,7 @@ existing photo works — so the copy below says "Add a photo" rather than
   `grocery,shopping list,family,shared list,price compare,flyer,deals,private,encrypted,meal,pantry`
 
 ### Google Play
-- **Title (≤30):** `StopHop: Family Grocery List`
+- **Title (≤30):** `PantryRun: Family Grocery List`
 - **Short description (≤80):**
   `Private, encrypted family grocery lists with local price comparison.` *(68 chars)*
 
@@ -28,7 +28,7 @@ existing photo works — so the copy below says "Add a photo" rather than
 
 > **The grocery list that respects your family's privacy.**
 >
-> StopHop keeps your household's shopping in sync — without accounts, ads,
+> PantryRun keeps your household's shopping in sync — without accounts, ads,
 > or anyone reading your data. Lists are end-to-end encrypted on your device;
 > not even the sync server can see what's on them.
 >
@@ -56,7 +56,7 @@ existing photo works — so the copy below says "Add a photo" rather than
 > A 12-word recovery phrase — like a crypto wallet, but for your grocery
 > list. Lose a phone, not your data.
 >
-> StopHop is built for households that think a grocery list shouldn't be
+> PantryRun is built for households that think a grocery list shouldn't be
 > anyone else's business. Privacy policy: https://groceryapp.app/privacy
 
 *(Both stores ≤4000 chars — this is ~1,600.)*
@@ -75,13 +75,13 @@ or "photograph" a flyer until the camera-capture bug is fixed.
 > Your grocery list knows when you eat, what you can afford, and when you're
 > pregnant before your family does. Most list apps sell that.
 >
-> We built StopHop: end-to-end encrypted family grocery lists. No account.
+> We built PantryRun: end-to-end encrypted family grocery lists. No account.
 > No ads. Self-host it if you don't trust us — you don't have to.
 >
 > 🛒🔒 App Store / Google Play → [link]
 
 **Post 2 — Reddit r/selfhosted (technical audience, no marketing voice)**
-> **StopHop — E2EE family grocery list with a self-hostable relay (Docker, ~256MB)**
+> **PantryRun — E2EE family grocery list with a self-hostable relay (Docker, ~256MB)**
 >
 > Built this because every shared-list app wanted an account and phoned home.
 > Architecture: Yjs CRDTs for offline-first sync, XChaCha20-Poly1305
@@ -98,7 +98,7 @@ or "photograph" a flyer until the camera-capture bug is fixed.
 **Post 3 — Instagram/Facebook (household decision-maker)**
 > We visited 2 stores instead of 4 and still saved $23 this week 🛒
 >
-> StopHop compares prices across your local stores and tells you which trip
+> PantryRun compares prices across your local stores and tells you which trip
 > is actually worth it. Your list syncs with your partner instantly — and
 > it's fully encrypted, so your shopping habits stay in your family.
 >
@@ -111,7 +111,7 @@ or "photograph" a flyer until the camera-capture bug is fixed.
 | # | Channel | Why this rank | Concrete first move |
 |---|---|---|---|
 | 1 | **r/selfhosted + r/privacy + r/degoogle** | The only audience that fully values the differentiator and tolerates v1 rough edges; self-hosters become evangelists and free QA | Post 2 above; be present in comments for 48h; add relay `docker-compose` one-liner to README first |
-| 2 | **Hacker News (Show HN)** | E2EE + CRDTs + self-hosting + honest threat-model doc is exactly HN-shaped; one good thread outperforms months of ads | "Show HN: StopHop – E2EE family grocery list you can self-host". Link the threat model, disclose the flyer-channel caveat up front — HN rewards honesty |
+| 2 | **Hacker News (Show HN)** | E2EE + CRDTs + self-hosting + honest threat-model doc is exactly HN-shaped; one good thread outperforms months of ads | "Show HN: PantryRun – E2EE family grocery list you can self-host". Link the threat model, disclose the flyer-channel caveat up front — HN rewards honesty |
 | 3 | **Product Hunt** | Broader early-adopter reach; privacy products chart well | Launch AFTER the Reddit/HN feedback round fixes the top usability items; ship with real screenshots |
 | 4 | **Privacy-recommendation lists** (PrivacyGuides forum, AlternativeTo, awesome-privacy / awesome-selfhosted GitHub lists) | Durable, compounding discovery — people search "private AnyList alternative" | Submit to AlternativeTo as alternative to AnyList/Bring!/OurGroceries; PR to awesome-selfhosted |
 | 5 | **Frugal/couponing communities** (r/Frugal, r/EatCheapAndHealthy, PF Canada subs) | The price-optimizer story lands here; bigger but less differentiated audience | Post a real "saved $X across 2 stores" walkthrough with screenshots — value-first, not launch-y |

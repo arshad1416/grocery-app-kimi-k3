@@ -1,5 +1,5 @@
 /**
- * SplashScreen — Branded splash with grocery bag logo, "StopHop" bold font,
+ * SplashScreen — Branded splash with grocery bag logo, "PantryRun" bold font,
  * "Your Intelligent Grocery Path" tagline.
  */
 
@@ -75,7 +75,7 @@ export default function SplashScreen({ onFinish }: SplashScreenProps) {
       </Animated.View>
 
       <Animated.View style={{ opacity: fadeAnim, alignItems: 'center' }}>
-        <Text style={styles.title}>StopHop</Text>
+        <Text style={styles.title}>PantryRun</Text>
         <Text style={styles.subtitle}>Your Intelligent Grocery Path</Text>
       </Animated.View>
     </View>

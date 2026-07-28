@@ -1,4 +1,4 @@
-# StopHop Usability Audit
+# PantryRun Usability Audit
 
 Read-only review at `b9d959d6` by a fresh-context reviewer (no involvement in
 the app's development). All paths relative to `GroceryApp/`. **No fixes were
@@ -35,7 +35,7 @@ Recovery screen → done. Non-technical users bail at server hosting, at
 | 1 | Sharing is unreachable for mainstream users: managed tier disabled; invite creation throws "Set up your relay connection first" with no path forward | `SettingsScreen.tsx:59`; `src/identity/invite-link.ts:59-64` | Guided "Set up sharing" wizard + either a hosted default relay or an honest "requires a home server" gate before users hit the dead end |
 | 2 | Fresh install shows a green "Connected" dot with no relay configured (`syncState: 'idle'` falls into the Connected branch) | `useSyncStore.ts:35`; `HomeScreen.tsx:452-459, 784-792` | Add a `not_configured` state rendered "Local only — tap to set up sharing", linking to Pairing |
 | 3 | **Camera-path flyer capture is fake**: with a working camera it pushes `captured-${Date.now()}.jpg` placeholder URIs instead of photographing, so every camera scan ends "Nothing extracted" | `CameraScanner.tsx:179-184` | Wire `takePictureAsync` via a CameraView ref; until then route flyer mode to the image-picker fallback (which works) |
-| 4 | App-init failure is a dead end: raw exception text, no Retry | `App.tsx:186-203, 251-252` | "StopHop couldn't start" + Retry button re-running `init()`; raw message behind a details disclosure |
+| 4 | App-init failure is a dead end: raw exception text, no Retry | `App.tsx:186-203, 251-252` | "PantryRun couldn't start" + Retry button re-running `init()`; raw message behind a details disclosure |
 | 5 | No first-run onboarding: nothing explains local-vs-synced, the pairing icon, or the recovery phrase before users hit errors | `App.tsx:232-240` | 2-3 card first-launch flow: instant local lists / share with family (setup) / encrypted + save your phrase |
 
 ### MAJOR
@@ -46,7 +46,7 @@ Recovery screen → done. Non-technical users bail at server hosting, at
 | 7 | Editing an item needs an undiscoverable double-tap (first tap = price banner, second = editor) | `GroceryListScreen.tsx:487-498` | Single tap → editor; prices via long-press or a price-chip target |
 | 8 | Join flow is Alert-driven jargon: "Pair with Relay", "Enrolling this device…", raw Family/Device ID hex shown | `PairingScreen.tsx:83, 113, 233, 356-370` | "Join your family" copy; plain status lines; IDs behind an Advanced disclosure |
 | 9 | Recovery-phrase handoff disjointed: inviter told invitee "will need your phrase" but never routed to it; invitee told mid-alert to go ask for it | `PairingScreen.tsx:127-146`; `SettingsScreen.tsx:489-495` | "Show recovery phrase now" button after Generate QR; in-screen step 2-of-2 indicator instead of alert |
-| 10 | Deals feature demands Turso URL, JWT, and knowing "FSA"; dev's personal DB name "stophop-arshad1416" ships in UI copy/placeholder | `SettingsScreen.tsx:871-896`; `HomeScreen.tsx:627-649` | "Enter your postal code" backed by a bundled default endpoint; remove personal DB name + token field from user-facing settings (build-time env already exists, `App.tsx:142-143`) |
+| 10 | Deals feature demands Turso URL, JWT, and knowing "FSA"; dev's personal DB name "pantryrun-arshad1416" ships in UI copy/placeholder | `SettingsScreen.tsx:871-896`; `HomeScreen.tsx:627-649` | "Enter your postal code" backed by a bundled default endpoint; remove personal DB name + token field from user-facing settings (build-time env already exists, `App.tsx:142-143`) |
 | 11 | Flyer scanning is undiscoverable: icon hidden unless `flyerScanEnabled && pricingOptedIn`, and opt-in defaults false — zero hint the feature exists | `GroceryListScreen.tsx:891-903`; `settings.ts:44` | Always show the icon; tapping it un-opted-in presents the existing pricing disclosure inline |
 | 12 | Raw technical strings in user alerts: `Alert.alert('Error', err.message)` on toggle/delete/reorder/load; pairing dumps parser messages; flyer error names "Ollama or Qwen" | `GroceryListScreen.tsx:207, 515, 539, 568, 599-610, 641`; `PairingScreen.tsx:73, 148-153`; `FlyerScanFlow.tsx:99-103` | Map known failures to plain sentences ("That invite link isn't valid — ask for a new one"); raw messages → Sentry, not UI |
 | 13 | Dark mode broken on the whole setup path: Pairing/Recovery/ItemEdit hardcode light styles; StatusBar permanently `style="light"` | `PairingScreen.tsx:382-391`; `RecoveryScreen.tsx:392-414`; `ItemEditScreen.tsx:446-464`; `App.tsx:242` | Apply the existing `themeColors` to those 3 screens; drive StatusBar from `useActiveTheme()` |

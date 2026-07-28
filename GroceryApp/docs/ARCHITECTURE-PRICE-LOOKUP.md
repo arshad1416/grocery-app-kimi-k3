@@ -8,7 +8,7 @@
 
 ## 1. Executive Summary
 
-StopHop already has substantial pricing infrastructure — a price store, adapter registry with six adapters, deal matching, stop optimization, and inline price display in `ItemRow`. The missing piece is **wiring**: connecting the act of adding/managing grocery list items to automatic, privacy-respecting price lookups with appropriate triggers, caching, and user feedback.
+PantryRun already has substantial pricing infrastructure — a price store, adapter registry with six adapters, deal matching, stop optimization, and inline price display in `ItemRow`. The missing piece is **wiring**: connecting the act of adding/managing grocery list items to automatic, privacy-respecting price lookups with appropriate triggers, caching, and user feedback.
 
 This document covers the trigger mechanism, data flow, display integration, privacy model, and specific file changes needed.
 

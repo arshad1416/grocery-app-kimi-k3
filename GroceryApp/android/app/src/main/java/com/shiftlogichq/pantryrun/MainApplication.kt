@@ -1,4 +1,4 @@
-package com.shiftlogichq.stophop
+package com.shiftlogichq.pantryrun
 
 import android.app.Application
 import android.content.res.Configuration

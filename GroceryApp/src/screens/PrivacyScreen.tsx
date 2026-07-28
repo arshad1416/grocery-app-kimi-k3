@@ -172,7 +172,7 @@ export default function PrivacyScreen({ navigation }: Props) {
       </View>
 
       <Text style={[styles.tagline, { color: theme.secondaryText }]}>
-        StopHop is privacy-first. Your data stays on your device.
+        PantryRun is privacy-first. Your data stays on your device.
       </Text>
 
       {/* ── Data Practices Summary ──────────────────────────────────── */}
@@ -198,7 +198,7 @@ export default function PrivacyScreen({ navigation }: Props) {
         <InfoRow
           icon="🚫"
           label="No Central Servers"
-          description="StopHop doesn't collect or store your grocery data on our servers."
+          description="PantryRun doesn't collect or store your grocery data on our servers."
           theme={theme}
         />
         <InfoRow
@@ -285,7 +285,7 @@ export default function PrivacyScreen({ navigation }: Props) {
       {/* ── Data Deletion ───────────────────────────────────────────── */}
       <Section title="Data Deletion" theme={theme}>
         <Text style={[styles.bodyText, { color: theme.secondaryText }]}>
-          Since StopHop stores data locally on your device:
+          Since PantryRun stores data locally on your device:
         </Text>
         <View style={styles.bulletList}>
           <Text style={[styles.bulletItem, { color: theme.secondaryText }]}>
@@ -334,7 +334,7 @@ export default function PrivacyScreen({ navigation }: Props) {
       {/* ── Version Info ────────────────────────────────────────────── */}
       <View style={styles.versionContainer}>
         <Text style={[styles.versionText, { color: theme.secondaryText }]}>
-          StopHop v1.03 · Privacy-first grocery lists
+          PantryRun v1.03 · Privacy-first grocery lists
         </Text>
       </View>
 

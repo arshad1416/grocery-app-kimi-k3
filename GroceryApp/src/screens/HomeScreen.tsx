@@ -779,7 +779,7 @@ export default function HomeScreen({ navigation }: Props) {
         <>
           {/* Header */}
           <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-            <Text style={[styles.title, { color: theme.text }]}>StopHop</Text>
+            <Text style={[styles.title, { color: theme.text }]}>PantryRun</Text>
             <View style={styles.headerRight}>
               <TouchableOpacity
                 onPress={() => navigation.navigate('Pairing')}

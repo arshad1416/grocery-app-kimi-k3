@@ -22,13 +22,13 @@ it's generic (weak/no trademark protection, unbrandable, un-searchable — you'd
 be competing with every app containing the words "grocery app"), and Apple's
 metadata rules disfavor generic keyword names.
 
-**"StopHop" is clear.** Nearest names anywhere: "Stop Hopper" (a transit
-ride-share app, play.google.com/…/com.sparelabs.platform.rider.stophopper) and
+**"PantryRun" is clear.** Nearest names anywhere: "Stop Hopper" (a transit
+ride-share app, play.google.com/…/com.sparelabs.platform.rider.pantryrunper) and
 the long-dead HopStop transit app (acquired by Apple 2013, delisted 2015 —
 en.wikipedia.org/wiki/HopStop). Different category, visually and phonetically
 distinguishable → no store-name or practical trademark collision for a
-grocery app. Keep **StopHop**, keep "Grocery" in the subtitle/title suffix for
-search: `StopHop: Family Grocery List`.
+grocery app. Keep **PantryRun**, keep "Grocery" in the subtitle/title suffix for
+search: `PantryRun: Family Grocery List`.
 
 ---
 
@@ -36,7 +36,7 @@ search: `StopHop: Family Grocery List`.
 
 | Field | Value | Limit |
 |---|---|---|
-| **Name** | `StopHop: Family Grocery List` | 28/30 |
+| **Name** | `PantryRun: Family Grocery List` | 28/30 |
 | **Subtitle** | `Private shared lists & prices` | 29/30 |
 | **Promotional text** | `Your family's grocery list, end-to-end encrypted. Compare local prices, scan store flyers, and find which stores save you the most — without giving up your data.` | 160/170 |
 | **Keywords** | `grocery,shopping list,family,shared list,price compare,flyer,deals,private,encrypted,meal,pantry` | 98/100 |
@@ -47,7 +47,7 @@ search: `StopHop: Family Grocery List`.
 
 > **The grocery list that respects your family's privacy.**
 >
-> StopHop keeps your household's shopping in sync — without accounts, ads,
+> PantryRun keeps your household's shopping in sync — without accounts, ads,
 > or anyone reading your data. Lists are end-to-end encrypted on your device;
 > not even the sync server can see what's on them.
 >
@@ -75,7 +75,7 @@ search: `StopHop: Family Grocery List`.
 > A 12-word recovery phrase — like a crypto wallet, but for your grocery
 > list. Lose a phone, not your data.
 >
-> StopHop is built for households that think a grocery list shouldn't be
+> PantryRun is built for households that think a grocery list shouldn't be
 > anyone else's business.
 >
 > Privacy policy & terms: https://groceryapp.app/privacy
@@ -91,7 +91,7 @@ device-verified, then "Snap a photo" is fine.
 
 | Field | Value | Limit |
 |---|---|---|
-| **Title** | `StopHop: Family Grocery List` | 28/30 |
+| **Title** | `PantryRun: Family Grocery List` | 28/30 |
 | **Short description** | `Private, encrypted family grocery lists with local price comparison.` | 68/80 |
 | **Category** | Shopping · Tags: shopping list, family organizer | |
 | **Content rating** | Everyone | |
@@ -173,7 +173,7 @@ inside it (crops badly at small sizes).
 ### 30-second storyboard (screen recording + text overlays, no voiceover)
 | Time | On screen (real app) | Text overlay |
 |---|---|---|
-| 0–3s | Logo splash → Home | **StopHop** — the private family grocery list |
+| 0–3s | Logo splash → Home | **PantryRun** — the private family grocery list |
 | 3–8s | Type "milk", "eggs", quick-add; check one off (satisfying tick) | Fast lists. Works offline. |
 | 8–13s | Cut: second device — the same items appear | Syncs with your family — **end-to-end encrypted** |
 | 13–18s | Price badges pop in on the list; store totals bar | See local prices while you plan |
@@ -221,7 +221,7 @@ Registration (user action — do not auto-purchase):
 
 **Rename cost (pre-launch = cheap):** display name lives in app.json
 (`name`, listing titles) + marketing docs; the bundle id
-(`com.shiftlogichq.stophop`) is user-invisible and can stay, but decide BEFORE
+(`com.shiftlogichq.pantryrun`) is user-invisible and can stay, but decide BEFORE
 first submission (iOS locks it after). Invite-link domain is brand-neutral
 (`groceryapp.app`) and keeps working; if switching to cartnest.app for links,
 update `associatedDomains`, AASA, assetlinks + DEEP-LINK-HOSTING.md.

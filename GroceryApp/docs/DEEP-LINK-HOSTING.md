@@ -20,10 +20,10 @@ Notes:
   from Play Console → App integrity → *App signing key certificate* (NOT just
   the upload key), otherwise verified links fail once Play re-signs.
 - Verify after deploy:
-  - Android: `adb shell pm verify-app-links --re-verify com.shiftlogichq.stophop`
-    then `adb shell pm get-app-links com.shiftlogichq.stophop`
+  - Android: `adb shell pm verify-app-links --re-verify com.shiftlogichq.pantryrun`
+    then `adb shell pm get-app-links com.shiftlogichq.pantryrun`
   - iOS: install a TestFlight build and tap an `https://groceryapp.app/invite?…`
-    link; it should open StopHop's Pairing screen.
+    link; it should open PantryRun's Pairing screen.
 - In-app routing is already wired: the `invite` path is an alias of the
   `Pairing` screen (`src/navigation/deepLinks.ts`), which reads `token` and
   runs the full join flow.

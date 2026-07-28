@@ -10,7 +10,7 @@ Legend: ✅ PASS · ⚠️ CONDITIONAL (named owner action) · ❌ FAIL today ·
 |---|---|---|
 | Target API level ≥ 34 (Android 14+) | ✅ | Expo SDK 56 root plugin supplies target/compile SDK ≥ 34. |
 | App Bundle (.aab) release format | ⚠️ | EAS production build produces an .aab; **action: run the production build** (never done this cycle). |
-| Release signing (no debug keystore) | ❌ | Upload keystore **not generated yet**. Gradle is pre-wired for `STOPHOP_UPLOAD_*` props and deliberately falls back to debug signing only for local builds (Play rejects debug-signed bundles, so this can't slip through silently). **Action (owner): `keytool -genkeypair …` or `eas credentials`, then back the keystore up.** |
+| Release signing (no debug keystore) | ❌ | Upload keystore **not generated yet**. Gradle is pre-wired for `PANTRYRUN_UPLOAD_*` props and deliberately falls back to debug signing only for local builds (Play rejects debug-signed bundles, so this can't slip through silently). **Action (owner): `keytool -genkeypair …` or `eas credentials`, then back the keystore up.** |
 | versionCode / versionName consistency | ✅ | versionCode 30 / versionName 1.30.0, matches app.json (was mismatched; fixed this cycle). |
 | Crash-free basic functionality | ⚠️ | Same caveat as Apple 2.1: all suites green but **no physical-device run this cycle**. Action: smoke test on a real Android device. |
 | 16 KB page-size compatibility (Play requirement for new apps, 2025+) | ⚠️ | Expo 56 toolchain builds 16 KB-aligned by default; **verify in the first production build artifact** (`zipalign` check) rather than assuming. |

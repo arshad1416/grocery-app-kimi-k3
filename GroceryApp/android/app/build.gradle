@@ -87,9 +87,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.shiftlogichq.stophop'
+    namespace 'com.shiftlogichq.pantryrun'
     defaultConfig {
-        applicationId 'com.shiftlogichq.stophop'
+        applicationId 'com.shiftlogichq.pantryrun'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 30
@@ -107,18 +107,18 @@ android {
         release {
             // Store builds MUST use a real upload keystore. Provide it via
             // gradle properties (~/.gradle/gradle.properties or -P flags):
-            //   STOPHOP_UPLOAD_STORE_FILE, STOPHOP_UPLOAD_STORE_PASSWORD,
-            //   STOPHOP_UPLOAD_KEY_ALIAS, STOPHOP_UPLOAD_KEY_PASSWORD
+            //   PANTRYRUN_UPLOAD_STORE_FILE, PANTRYRUN_UPLOAD_STORE_PASSWORD,
+            //   PANTRYRUN_UPLOAD_KEY_ALIAS, PANTRYRUN_UPLOAD_KEY_PASSWORD
             // Generate once (and BACK IT UP — losing it locks you out of
             // Play updates unless enrolled in Play App Signing):
-            //   keytool -genkeypair -v -keystore stophop-upload.keystore \
-            //     -alias stophop-upload -keyalg RSA -keysize 2048 -validity 10000
+            //   keytool -genkeypair -v -keystore pantryrun-upload.keystore \
+            //     -alias pantryrun-upload -keyalg RSA -keysize 2048 -validity 10000
             // EAS builds: `eas credentials` manages this instead.
-            if (project.hasProperty('STOPHOP_UPLOAD_STORE_FILE')) {
-                storeFile file(STOPHOP_UPLOAD_STORE_FILE)
-                storePassword STOPHOP_UPLOAD_STORE_PASSWORD
-                keyAlias STOPHOP_UPLOAD_KEY_ALIAS
-                keyPassword STOPHOP_UPLOAD_KEY_PASSWORD
+            if (project.hasProperty('PANTRYRUN_UPLOAD_STORE_FILE')) {
+                storeFile file(PANTRYRUN_UPLOAD_STORE_FILE)
+                storePassword PANTRYRUN_UPLOAD_STORE_PASSWORD
+                keyAlias PANTRYRUN_UPLOAD_KEY_ALIAS
+                keyPassword PANTRYRUN_UPLOAD_KEY_PASSWORD
             }
         }
     }
@@ -131,7 +131,7 @@ android {
             // when no upload keystore is configured. Play Console rejects
             // debug-signed bundles, so a store submission cannot ship this way
             // by accident.
-            signingConfig project.hasProperty('STOPHOP_UPLOAD_STORE_FILE')
+            signingConfig project.hasProperty('PANTRYRUN_UPLOAD_STORE_FILE')
                 ? signingConfigs.release
                 : signingConfigs.debug
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'

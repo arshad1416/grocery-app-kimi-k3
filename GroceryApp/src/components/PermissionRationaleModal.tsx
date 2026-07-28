@@ -1,5 +1,5 @@
 /**
- * PermissionRationaleModal — Reusable dialog for explaining why StopHop
+ * PermissionRationaleModal — Reusable dialog for explaining why PantryRun
  * needs a device permission BEFORE showing the OS permission dialog.
  *
  * Usage:
@@ -11,7 +11,7 @@
  *   />
  *
  * Follows the existing privacy-note pattern from SettingsScreen.tsx.
- * Matches StopHop's light/dark theme system.
+ * Matches PantryRun's light/dark theme system.
  */
 
 import React from 'react';
@@ -43,23 +43,23 @@ const PERMISSION_INFO: Record<PermissionType, PermissionInfo> = {
     icon: '📷',
     title: 'Camera Access',
     reason:
-      'StopHop needs camera access to scan barcodes and quickly add items to your grocery list.',
+      'PantryRun needs camera access to scan barcodes and quickly add items to your grocery list.',
     details: [
       'Camera frames are processed in real-time for barcode detection',
       'No images are captured, saved, or transmitted',
       'Camera is only active while the scanner screen is open',
     ],
     privacyNote:
-      'StopHop never stores or shares camera images. All processing happens on your device.',
+      'PantryRun never stores or shares camera images. All processing happens on your device.',
   },
   microphone: {
     icon: '🎤',
     title: 'Microphone Access',
     reason:
-      'StopHop needs microphone access so you can add grocery items using voice commands.',
+      'PantryRun needs microphone access so you can add grocery items using voice commands.',
     details: [
       'Voice is converted to text using your device\'s speech recognition',
-      'No audio is recorded or stored by StopHop',
+      'No audio is recorded or stored by PantryRun',
       'Microphone is only active while the voice input button is pressed',
     ],
     privacyNote:
@@ -69,7 +69,7 @@ const PERMISSION_INFO: Record<PermissionType, PermissionInfo> = {
     icon: '🔔',
     title: 'Notification Permission',
     reason:
-      'StopHop uses notifications to remind you about shopping trips and list updates from family members.',
+      'PantryRun uses notifications to remind you about shopping trips and list updates from family members.',
     details: [
       'Notifications are local — sent from the app on your device',
       'No remote push notifications through third-party services',

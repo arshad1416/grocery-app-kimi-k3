@@ -39,7 +39,7 @@ grocerychop.com · familywall.com/premium.html.
    ~$80 (Cozi Max) — but these bundle calendars/location, not just lists.
 3. **Meal planners: ~$36–72/yr** ($2.99–5.99/mo).
 4. **Price-comparison/flyer apps: $0** — because the *user* is the product
-   (retailer ads, analytics resale). This is the free anchor StopHop's paid
+   (retailer ads, analytics resale). This is the free anchor PantryRun's paid
    savings features must respect.
 
 ## Verified: nobody offers the E2EE + self-hosting combination
@@ -50,19 +50,19 @@ OurGroceries, Cozi all declare tracking identifiers (several with precise
 location). AnyList is the cleanest mainstream option but is account-based,
 plaintext server-side. Self-hosting does exist — but only in open-source
 hobby projects (KitchenOwl, Grocy) that still aren't E2EE (their server sees
-plaintext) and have no savings features. **StopHop's combination — E2EE + no
+plaintext) and have no savings features. **PantryRun's combination — E2EE + no
 account + self-hostable + price intelligence — has no direct competitor.**
 
 ## Positioning takeaway
 
-Users today approximate StopHop by running Flipp (privacy-hostile) alongside
+Users today approximate PantryRun by running Flipp (privacy-hostile) alongside
 AnyList/Bring (list-only). The savings layer justifies pricing above the
 $6–16/yr list cluster; free-Flipp caps it well below the $39 organizer tier.
 Credible sweet spot: **$14.99–19.99/yr family premium** ($1.99–2.99/mo),
 anchored on AnyList's household plan, with room to test $24.99/yr if AI flyer
 scanning is the hero paid feature. Keep E2EE sync itself free — privacy as a
 paywall reads badly and undercuts the brand; monetize the intelligence
-(optimizer, AI scanning, voice). The App-Store-visible contrast — StopHop's
+(optimizer, AI scanning, voice). The App-Store-visible contrast — PantryRun's
 empty "Data Used to Track You" label next to Bring!/Listonic/Out of Milk —
 is a differentiator no tracking-funded incumbent can copy quickly (AnyList
 already has a clean label, but lacks E2EE, no-account, and self-hosting).

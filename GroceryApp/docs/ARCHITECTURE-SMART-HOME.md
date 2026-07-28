@@ -1,4 +1,4 @@
-# StopHop Architecture: Smart Home Integration
+# PantryRun Architecture: Smart Home Integration
 
 **Feature:** Voice-activated grocery list management via Home Assistant, Google Home, and Amazon Alexa  
 **Tag:** `v1.03+`  
@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-StopHop is a privacy-first, E2E-encrypted grocery list app with a self-hosted relay server. Adding smart home voice integration lets family members add items hands-free while cooking, cleaning, or driving.
+PantryRun is a privacy-first, E2E-encrypted grocery list app with a self-hosted relay server. Adding smart home voice integration lets family members add items hands-free while cooking, cleaning, or driving.
 
 ### Design Constraint: E2E Encryption
 
@@ -60,7 +60,7 @@ Alexa / Google Home → IFTTT → Relay Server Webhook
 ```
 
 **Pros:** Zero code for skill development.  
-**Cons:** IFTTT has rate limits on free tier, adds latency, and is another third-party dependency. StopHop already has IFTTT webhook code (`src/voice/ifttt.ts`) but this was designed for outbound (app → IFTTT), not inbound.
+**Cons:** IFTTT has rate limits on free tier, adds latency, and is another third-party dependency. PantryRun already has IFTTT webhook code (`src/voice/ifttt.ts`) but this was designed for outbound (app → IFTTT), not inbound.
 
 ### Recommendation
 
@@ -88,8 +88,8 @@ HA has a native **Alexa Smart Home Skill** integration. Two options:
 
 **Recommended: Custom Alexa Skill** (free, self-hosted)
 
-1. Create an Alexa Skill with invocation name "StopHop" or use a routine trigger.
-2. The Skill's Lambda function calls `https://ha.arshadkazi.ca/api/webhook/stophop-add-item`.
+1. Create an Alexa Skill with invocation name "PantryRun" or use a routine trigger.
+2. The Skill's Lambda function calls `https://ha.arshadkazi.ca/api/webhook/pantryrun-add-item`.
 3. HA processes the webhook and calls the relay server.
 
 **Alternative: Alexa Routines + HA**
@@ -120,7 +120,7 @@ HA supports Google Assistant via:
 **Alternative: HA Conversation Agent**
 
 HA's built-in conversation agent can parse natural language:
-- "Add milk to StopHop list" → HA automation → relay webhook.
+- "Add milk to PantryRun list" → HA automation → relay webhook.
 - Works with any voice assistant that can trigger HA automations.
 
 #### Home Assistant Voice (Optional)
@@ -234,15 +234,15 @@ Create an automation in HA that accepts voice commands and forwards to the relay
 **File: `automations.yaml`** (in HA config)
 
 ```yaml
-# Automation: Add item to StopHop grocery list via voice
-- alias: "StopHop - Add Item to Grocery List"
+# Automation: Add item to PantryRun grocery list via voice
+- alias: "PantryRun - Add Item to Grocery List"
   trigger:
     - platform: webhook
-      webhook_id: "stophop-add-item"
+      webhook_id: "pantryrun-add-item"
       allowed_methods:
         - POST
   action:
-    - service: rest_command.stophop_add_item
+    - service: rest_command.pantryrun_add_item
       data:
         family_id: "{{ trigger.json.family_id | default('your-family-id') }}"
         list_id: "{{ trigger.json.list_id | default('') }}"
@@ -257,12 +257,12 @@ Create an automation in HA that accepts voice commands and forwards to the relay
 
 ```yaml
 rest_command:
-  stophop_add_item:
+  pantryrun_add_item:
     url: "http://<relay-server-host>:8080/api/voice/add-item"
     method: POST
     headers:
       Content-Type: "application/json"
-      Authorization: "Bearer !secret stophop_api_key"
+      Authorization: "Bearer !secret pantryrun_api_key"
     payload: >
       {
         "familyId": "{{ family_id }}",
@@ -280,7 +280,7 @@ rest_command:
 **File: `secrets.yaml`**
 
 ```yaml
-stophop_api_key: "your-voice-integration-api-key-here"
+pantryrun_api_key: "your-voice-integration-api-key-here"
 ```
 
 ### 4.3 HA Conversation Agent (Natural Language)
@@ -291,11 +291,11 @@ For a more natural experience, use HA's conversation agent with intent scripts:
 
 ```yaml
 intent_script:
-  StopHopAddItem:
+  PantryRunAddItem:
     speech:
       text: "Added {{ item_name }} to your grocery list"
     action:
-      - service: rest_command.stophop_add_item
+      - service: rest_command.pantryrun_add_item
         data:
           family_id: "your-family-id"
           item_name: "{{ item_name }}"
@@ -303,23 +303,23 @@ intent_script:
           item_unit: "{{ item_unit | default('each') }}"
 ```
 
-**File: `custom_sentences/en/stophop.yaml`**
+**File: `custom_sentences/en/pantryrun.yaml`**
 
 ```yaml
 language: "en"
 intents:
-  StopHopAddItem:
+  PantryRunAddItem:
     data:
       - sentences:
-          - "add {item_name} to [the] (grocery|shopping|stophop) list"
-          - "add {item_name} to stophop"
+          - "add {item_name} to [the] (grocery|shopping|pantryrun) list"
+          - "add {item_name} to pantryrun"
           - "put {item_name} on [the] (grocery|shopping) list"
           - "i need {item_name}"
           - "we need {item_name}"
           - "buy {item_name}"
           - "get {item_name}"
         requires_context:
-          domain: "stophop"
+          domain: "pantryrun"
 ```
 
 This allows natural language via HA's built-in voice pipeline or any integrated voice assistant.
@@ -329,7 +329,7 @@ This allows natural language via HA's built-in voice pipeline or any integrated 
 Create an Alexa Routine (via Alexa app):
 
 1. **Trigger:** "Alexa, add [item] to shopping list" (or custom phrase)
-2. **Action:** "Webhook" → POST to `https://ha.arshadkazi.ca/api/webhook/stophop-add-item`
+2. **Action:** "Webhook" → POST to `https://ha.arshadkazi.ca/api/webhook/pantryrun-add-item`
 3. **Payload:**
    ```json
    {
@@ -346,7 +346,7 @@ Create a Google Home Routine (via Google Home app):
 
 1. **Trigger:** "Hey Google, add [item] to shopping"
 2. **Action:** "Adjust Home Devices" → "Try adding your own" → Webhook
-3. **URL:** `https://ha.arshadkazi.ca/api/webhook/stophop-add-item`
+3. **URL:** `https://ha.arshadkazi.ca/api/webhook/pantryrun-add-item`
 
 **Limitation:** Google Home Routines have limited webhook support. The more robust approach is using **Actions on Google** with a webhook fulfillment.
 
@@ -716,7 +716,7 @@ const MULTI_WORD_FILLER_PREFIXES = [
   'add to the grocery list',
   'add to my shopping list',
   'add to my grocery list',
-  'add to stophop',
+  'add to pantryrun',
   'put on the shopping list',
   'put on the grocery list',
   'add to the list',
@@ -740,7 +740,7 @@ export function parseSmartHomeCommand(text: string): SmartHomeCommand {
 
   // "add milk to the shopping list"
   const addMatch = lower.match(
-    /^(?:add|put|get|buy|need|want)\s+(.+?)(?:\s+to\s+(?:the\s+)?(?:grocery|shopping|stophop)?\s*list)?$/i
+    /^(?:add|put|get|buy|need|want)\s+(.+?)(?:\s+to\s+(?:the\s+)?(?:grocery|shopping|pantryrun)?\s*list)?$/i
   );
   if (addMatch) {
     const item = parseVoiceText(addMatch[1]);
@@ -881,13 +881,13 @@ homeAssistantUrl?: string;         // HA URL for direct integration
 
 ### 10.1 User-Facing Setup Steps
 
-1. **In StopHop app:** Go to Settings → Smart Home Integration → Enable.
+1. **In PantryRun app:** Go to Settings → Smart Home Integration → Enable.
 2. **App generates** an API key and displays it.
 3. **User copies** the API key.
 4. **In Home Assistant:** Add the REST command and automation (or import a blueprint).
 5. **User pastes** the API key into HA's `secrets.yaml`.
 6. **In Alexa/Google Home app:** Create a routine that triggers the HA webhook.
-7. **Test:** Say "Alexa, add milk to shopping list" → verify item appears in StopHop.
+7. **Test:** Say "Alexa, add milk to shopping list" → verify item appears in PantryRun.
 
 ### 10.2 HA Blueprint (Simplified Setup)
 
@@ -895,17 +895,17 @@ Create a downloadable HA blueprint that automates the setup:
 
 ```yaml
 blueprint:
-  name: StopHop Grocery List Integration
-  description: Add items to StopHop grocery list via voice
+  name: PantryRun Grocery List Integration
+  description: Add items to PantryRun grocery list via voice
   domain: automation
   input:
-    stophop_api_key:
-      name: StopHop API Key
-      description: Your StopHop voice integration API key
-    stophop_relay_url:
+    pantryrun_api_key:
+      name: PantryRun API Key
+      description: Your PantryRun voice integration API key
+    pantryrun_relay_url:
       name: Relay Server URL
       default: "http://localhost:8080"
-    stophop_family_id:
+    pantryrun_family_id:
       name: Family ID
 ```
 

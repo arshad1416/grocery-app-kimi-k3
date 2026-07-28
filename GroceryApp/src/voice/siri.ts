@@ -22,7 +22,7 @@ import { parseVoiceText } from './nlp';
 import { getDatabase } from '../storage/database';
 
 // Shared App Group Identifier
-const APP_GROUP_ID = 'group.com.shiftlogichq.stophop';
+const APP_GROUP_ID = 'group.com.shiftlogichq.pantryrun';
 
 export type SiriIntentHandler = (item: ParsedItem) => Promise<void>;
 

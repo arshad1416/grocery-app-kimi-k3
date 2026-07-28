@@ -43,15 +43,15 @@ curl -sSfL https://get.turso.tech/install.sh | bash
 # Login
 turso auth login
 
-# Create a database for StopHop products
-turso db create stophop-products
+# Create a database for PantryRun products
+turso db create pantryrun-products
 
 # Get the database URL + token
-turso db show stophop-products --url        # → https://stophop-products-<org>.turso.io
-turso db tokens create stophop-products     # → <token>
+turso db show pantryrun-products --url        # → https://pantryrun-products-<org>.turso.io
+turso db tokens create pantryrun-products     # → <token>
 
 # Initialize the schema
-turso db shell stophop-products < src/services/init-schema.sql
+turso db shell pantryrun-products < src/services/init-schema.sql
 ```
 
 ### 3. Create `init-schema.sql`

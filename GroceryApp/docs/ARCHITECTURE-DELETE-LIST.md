@@ -1,4 +1,4 @@
-# StopHop Architecture: Delete Grocery List
+# PantryRun Architecture: Delete Grocery List
 
 **Feature:** Swipe-to-Delete + Long-Press Context Menu for List Deletion  
 **Tag:** `v1.03+`  

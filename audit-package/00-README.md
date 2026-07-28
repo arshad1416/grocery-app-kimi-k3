@@ -1,4 +1,4 @@
-# StopHop — Audit & Monetization Package
+# PantryRun — Audit & Monetization Package
 
 **Audit target (confirmed by owner):** worktree
 `~/Documents/ShiftLogic_HQ/GroceryApp/dreamy-faraday-758d4e`, branch

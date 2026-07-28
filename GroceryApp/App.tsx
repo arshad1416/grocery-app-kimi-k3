@@ -93,7 +93,7 @@ function LoadingView() {
     <SafeAreaProvider>
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#7CB342" />
-        <Text style={styles.loadingText}>Loading StopHop...</Text>
+        <Text style={styles.loadingText}>Loading PantryRun...</Text>
       </View>
     </SafeAreaProvider>
   );
@@ -205,7 +205,7 @@ function App() {
     return (
       <SafeAreaProvider>
         <View style={styles.centered}>
-          <Text style={styles.errorTitle}>StopHop couldn't start</Text>
+          <Text style={styles.errorTitle}>PantryRun couldn't start</Text>
           <Text style={styles.errorMsg}>
             Something went wrong while getting things ready. This is usually
             temporary — please try again.

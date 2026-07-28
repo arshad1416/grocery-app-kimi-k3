@@ -1,4 +1,4 @@
-# StopHop Family Notification System — Architecture Design
+# PantryRun Family Notification System — Architecture Design
 
 **Date:** 2026-06-15
 **Status:** Draft
@@ -245,7 +245,7 @@ import type { EncryptedData } from '../types';
 
 // ─── Notification Channel (Android) ──────────────────────────────────────
 
-const NOTIFICATION_CHANNEL_ID = 'stophop-family';
+const NOTIFICATION_CHANNEL_ID = 'pantryrun-family';
 
 async function ensureNotificationChannel(): Promise<void> {
   if (Platform.OS === 'android') {
@@ -838,7 +838,7 @@ On `notification` message relay, for each family device NOT currently connected 
 ```javascript
 if (!deviceSockets.has(familyDeviceId)) {
   sendFCM(pushTokenStore.get(familyDeviceId), {
-    title: 'StopHop',
+    title: 'PantryRun',
     body: encryptedNotificationId,
     data: { listId, notificationId },
   });
@@ -1057,7 +1057,7 @@ package.json                           # Add expo-notifications dependency
       ["expo-notifications", {
         "icon": "./assets/notification-icon.png",
         "color": "#10B981",
-        "defaultChannel": "stophop-family",
+        "defaultChannel": "pantryrun-family",
         "sounds": ["./assets/notification-sound.wav"]
       }]
     ]

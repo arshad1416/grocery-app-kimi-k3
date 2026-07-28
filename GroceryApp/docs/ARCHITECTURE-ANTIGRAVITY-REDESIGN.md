@@ -1,4 +1,4 @@
-# StopHop — Antigravity Redesign Architecture
+# PantryRun — Antigravity Redesign Architecture
 
 > **Date:** 2026-06-16  
 > **Current tag:** v1.17 (reverted to v1.15 working codebase)  
@@ -146,7 +146,7 @@ logoBagSecondary:'#7CB342'   — Green accents (leaf)
 logoTomato:      '#E53935'   — Red tomato
 logoCarrot:      '#FF8F00'   — Orange carrot
 logoLeaf:        '#7CB342'   — Green leaf
-titleText:       '#1A1A1A'   — Bold black "StopHop"
+titleText:       '#1A1A1A'   — Bold black "PantryRun"
 subtitleText:    '#6B7B6F'   — Gray "Your Intelligent Grocery Path"
 ```
 
@@ -158,7 +158,7 @@ subtitleText:    '#6B7B6F'   — Gray "Your Intelligent Grocery Path"
 ```typescript
 // Primary font — Outfit (already in use for title)
 fontFamily: {
-  title:     'Outfit-Bold'     // "StopHop" header
+  title:     'Outfit-Bold'     // "PantryRun" header
   subtitle:  'Outfit-Regular'  // "Your Intelligent Grocery Path"
   body:      'Inter-Regular'   // Item names, body text
   bodyBold:  'Inter-SemiBold'  // Emphasized body
@@ -170,7 +170,7 @@ fontFamily: {
 
 ### Size Scale
 ```
-splashTitle:     48  // "StopHop" on splash
+splashTitle:     48  // "PantryRun" on splash
 splashSubtitle:  16  // Tagline
 screenTitle:     28  // "My Grocery List" headers
 sectionHeader:   18  // Category headers like "Produce"
@@ -311,7 +311,7 @@ Layout:
     - Orange bag body
     - Green leaf accent
     - Tomato (red) + Carrot (orange) peeking out
-  - "StopHop" — bold, black, large
+  - "PantryRun" — bold, black, large
   - "Your Intelligent Grocery Path" — gray, regular weight
   - Auto-dismiss after 2s
 ```
@@ -552,7 +552,7 @@ src/sync/*.ts                      — all sync logic unchanged
 │      │  🍅 🥕 🍃   │       │     (orange bag, red tomato,
 │      └─────────────┘       │      orange carrot, green leaf)
 │                             │
-│        StopHop              │  ← Bold, black, ~48px
+│        PantryRun              │  ← Bold, black, ~48px
 │  Your Intelligent Grocery   │  ← Regular, gray, ~16px
 │           Path              │
 │                             │

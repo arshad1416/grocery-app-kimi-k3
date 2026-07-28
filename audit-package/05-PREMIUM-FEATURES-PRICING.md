@@ -1,4 +1,4 @@
-# StopHop Premium — Paywalled Features & Recommended Price
+# PantryRun Premium — Paywalled Features & Recommended Price
 
 Builds on the owner's direction (2026-07-06): monetize via subscription for
 Trip Optimizer + Smart Home. Grounded in `04-COMPETITORS-PRICING.md` and the
@@ -7,11 +7,11 @@ technical state in `GroceryApp/docs/MONETIZATION.md`.
 ## Principle: privacy is the brand, intelligence is the product
 E2EE family sync, offline lists, barcode scanning, and manual prices stay
 **free forever**. Charging for privacy reads as extortion to exactly the
-audience StopHop courts; charging for *savings intelligence* reads as fair —
+audience PantryRun courts; charging for *savings intelligence* reads as fair —
 it visibly pays for itself and it has real marginal costs (AI inference,
 managed infrastructure).
 
-## The paywall: "StopHop Plus" — 4 features (≥3 required; 4 proposed)
+## The paywall: "PantryRun Plus" — 4 features (≥3 required; 4 proposed)
 
 | # | Feature | Why it's paywallable | State today |
 |---|---|---|---|
@@ -29,10 +29,10 @@ installs after the paywall release).
 
 | | Recommendation | Rationale |
 |---|---|---|
-| **Headline** | **$14.99/year — StopHop Plus (whole family, all devices)** | Anchors exactly on AnyList Household ($14.99/yr, the category's only true family plan) while delivering strictly more (optimizer + AI scanning + managed sync). Sits atop the $6–16 list-app cluster, far under the $39 organizer tier, and respects the "Flipp is free" anchor. One SKU, family-inclusive — per-seat pricing fights the family-first brand |
+| **Headline** | **$14.99/year — PantryRun Plus (whole family, all devices)** | Anchors exactly on AnyList Household ($14.99/yr, the category's only true family plan) while delivering strictly more (optimizer + AI scanning + managed sync). Sits atop the $6–16 list-app cluster, far under the $39 organizer tier, and respects the "Flipp is free" anchor. One SKU, family-inclusive — per-seat pricing fights the family-first brand |
 | Monthly | $1.99/mo | Matches Bring!/Listonic monthly points; exists to lower trial friction, annual is the real product |
 | Test cell | $19.99–24.99/yr | Worth A/B testing once AI flyer scanning proves out as the hero feature; don't launch there |
-| Anti-recommendation | Lifetime unlock | Managed relay + AI inference are recurring costs; lifetime revenue vs perpetual COGS is a trap (OurGroceries can do it — pure ad-removal has no COGS; StopHop Plus does) |
+| Anti-recommendation | Lifetime unlock | Managed relay + AI inference are recurring costs; lifetime revenue vs perpetual COGS is a trap (OurGroceries can do it — pure ad-removal has no COGS; PantryRun Plus does) |
 
 **Unit-economics sanity check at $14.99/yr:** relay cost ≈ $0.10–0.30/family-mo
 (256MB container, shared), AI scanning ≈ $0.005/image → a family scanning 20

@@ -1,6 +1,6 @@
-# StopHop — Store Compliance Reference
+# PantryRun — Store Compliance Reference
 
-> **Updated:** July 3, 2026 | **App version:** v1.30.0 | **Package:** `com.shiftlogichq.stophop`
+> **Updated:** July 3, 2026 | **App version:** v1.30.0 | **Package:** `com.shiftlogichq.pantryrun`
 
 This document contains all declarations needed for Google Play Console and Apple App Store Connect submissions.
 
@@ -8,7 +8,7 @@ This document contains all declarations needed for Google Play Console and Apple
 
 ## 0. Export Compliance (Encryption) — REQUIRED, EASY TO GET WRONG
 
-StopHop implements real end-to-end encryption (libsodium XChaCha20-Poly1305,
+PantryRun implements real end-to-end encryption (libsodium XChaCha20-Poly1305,
 Argon2id, Ed25519, Curve25519, RFC 9474 blind RSA). This is more than
 HTTPS/OS-provided crypto, so it does NOT qualify for Apple's "exempt" answer.
 
@@ -36,7 +36,7 @@ HTTPS/OS-provided crypto, so it does NOT qualify for Apple's "exempt" answer.
 
 ## 1. Google Play — Data Safety Section
 
-Navigate to: **Play Console → StopHop → App Content → Data Safety**
+Navigate to: **Play Console → PantryRun → App Content → Data Safety**
 
 ### Data Collection Overview
 
@@ -69,7 +69,7 @@ Navigate to: **Play Console → StopHop → App Content → Data Safety**
 - **Shared:** No
 - **Purpose:** App functionality
 - **Required or Optional:** Required
-- **Explanation:** StopHop tracks in-app interactions (item additions, list edits) locally on the device to support the grocery list feature. This data is encrypted and stored only on the user's device.
+- **Explanation:** PantryRun tracks in-app interactions (item additions, list edits) locally on the device to support the grocery list feature. This data is encrypted and stored only on the user's device.
 
 #### App Info and Performance → Crash Logs
 - **Collected:** Yes
@@ -113,17 +113,17 @@ Navigate to: **Play Console → StopHop → App Content → Data Safety**
 
 ## 2. Apple App Store — App Privacy Labels
 
-Navigate to: **App Store Connect → StopHop → App Privacy**
+Navigate to: **App Store Connect → PantryRun → App Privacy**
 
 ### Privacy Label Configuration
 
 Click "Edit" next to App Privacy and configure as follows:
 
 #### Data Used to Track You
-→ **No** — StopHop does not track users across apps or websites.
+→ **No** — PantryRun does not track users across apps or websites.
 
 #### Data Linked to You
-→ **No** — StopHop does not link any collected data to the user's identity.
+→ **No** — PantryRun does not link any collected data to the user's identity.
 
 #### Data Collected
 
@@ -261,15 +261,15 @@ https://groceryapp.app
 
 #### Camera
 **Title:** `Camera Access`
-**Message:** `StopHop uses your camera to scan barcodes, scan QR pairing codes, and photograph store flyers for price extraction. Barcode/QR frames are processed in real-time and discarded. Flyer photos are sent (without location metadata) to your relay server for AI extraction, then discarded.`
+**Message:** `PantryRun uses your camera to scan barcodes, scan QR pairing codes, and photograph store flyers for price extraction. Barcode/QR frames are processed in real-time and discarded. Flyer photos are sent (without location metadata) to your relay server for AI extraction, then discarded.`
 
 #### Microphone
 **Title:** `Microphone Access`
-**Message:** `StopHop uses your microphone for voice input. Your speech is converted to text on your device. No audio is recorded or transmitted.`
+**Message:** `PantryRun uses your microphone for voice input. Your speech is converted to text on your device. No audio is recorded or transmitted.`
 
 #### Notifications (Android 13+)
 **Title:** `Notification Permission`
-**Message:** `StopHop sends local notifications for shopping reminders and family list updates. No remote push notifications — all notifications come from the app on your device.`
+**Message:** `PantryRun sends local notifications for shopping reminders and family list updates. No remote push notifications — all notifications come from the app on your device.`
 
 ### iOS (Info.plist strings — already in app.json)
 
@@ -355,7 +355,7 @@ For Google Play and Apple, the managed tier is the one that needs compliance dis
 - [ ] `READ_EXTERNAL_STORAGE` maxSdkVersion=32 justified
 - [ ] No SYSTEM_ALERT_WINDOW (removed)
 - [ ] Target SDK 34+ (Android 14)
-- [ ] Release bundle signed with the upload keystore (STOPHOP_UPLOAD_* gradle
+- [ ] Release bundle signed with the upload keystore (PANTRYRUN_UPLOAD_* gradle
       props or EAS credentials) — NOT the debug keystore
 - [ ] versionCode/versionName in android/app/build.gradle match app.json
 

@@ -1,6 +1,6 @@
 # Security Policy
 
-StopHop (GroceryApp) is an end-to-end-encrypted family grocery app. Security
+PantryRun (GroceryApp) is an end-to-end-encrypted family grocery app. Security
 reports are very welcome.
 
 ## Reporting a Vulnerability

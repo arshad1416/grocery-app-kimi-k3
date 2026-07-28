@@ -114,7 +114,7 @@ Would sign off for v1 family data, with the following judgments:
 - Added SECURITY.md (responsible disclosure + reviewer map) per CLOSING-REMAINING-GAPS recommendation. Paid audit: correctly deferred to v1.1 per that doc; nothing found that makes shipping v1 unsafe for its stated threat model.
 
 ## Store-compliance pass (task 7, 2026-07-03)
-- Fixed: ITSAppUsesNonExemptEncryption=true + STORE_COMPLIANCE.md §0 (export answers, BIS 5D992.c self-classification); android versionCode 30/versionName 1.30.0 sync; release signing via STOPHOP_UPLOAD_* props; AASA bundle-id corrected; Leave Family + extended Clear Local Prices flows; privacy labels + PrivacyScreen + privacy/index.html now disclose flyer photos (ephemeral User Content), relay 30-day retention; camera usage strings cover QR/flyer; removed node_modules_bak (20k tracked files) + .bak2 strays.
+- Fixed: ITSAppUsesNonExemptEncryption=true + STORE_COMPLIANCE.md §0 (export answers, BIS 5D992.c self-classification); android versionCode 30/versionName 1.30.0 sync; release signing via PANTRYRUN_UPLOAD_* props; AASA bundle-id corrected; Leave Family + extended Clear Local Prices flows; privacy labels + PrivacyScreen + privacy/index.html now disclose flyer photos (ephemeral User Content), relay 30-day retention; camera usage strings cover QR/flyer; removed node_modules_bak (20k tracked files) + .bak2 strays.
 - **Needs the owner (cannot be done from the repo):** Apple Team ID in AASA + deploy to groceryapp.app/.well-known/; generate + back up upload keystore (or `eas credentials`); host privacy policy at groceryapp.app/privacy; fill the console forms using §§0-2; annual BIS email. Store accounts/fees are the user's call.
 
 ## Crypto survey highlights (full detail in review task)
@@ -122,6 +122,6 @@ Would sign off for v1 family data, with the following judgments:
 - Flags to judge in review: passkeys.ts stub falls back to Math.random (stub feature — candidate to remove from v1); Math.random for reconnect jitter (benign); no envelope versioning; no key rotation / forward secrecy (documented known gap); AAD context strings are untyped.
 
 ## Store compliance survey highlights (task 7)
-- Blockers found: (1) android versionCode 29 / versionName 1.29.0 vs app.json 1.30.0 mismatch; (2) release build signs with DEBUG keystore (build.gradle:115); (3) `ITSAppUsesNonExemptEncryption` missing from app.json ios.infoPlist; (4) ios/apple-app-site-association has placeholder `TEAMID.com.groceryapp.app` (also wrong bundle id — should be com.shiftlogichq.stophop) — real Team ID must come from the user.
+- Blockers found: (1) android versionCode 29 / versionName 1.29.0 vs app.json 1.30.0 mismatch; (2) release build signs with DEBUG keystore (build.gradle:115); (3) `ITSAppUsesNonExemptEncryption` missing from app.json ios.infoPlist; (4) ios/apple-app-site-association has placeholder `TEAMID.com.groceryapp.app` (also wrong bundle id — should be com.shiftlogichq.pantryrun) — real Team ID must come from the user.
 - Rejection risks: missing "Clear Local Prices" UI that PrivacyScreen references; no Leave Family/unpair flow; verify targetSdk ≥ 34 via Expo 56.
 - Good: permission strings present, privacy manifest present, adaptive icons present, privacy policy html exists, Sentry opt-out + sendDefaultPii:false, endpoints list documented in STORE_COMPLIANCE.md.

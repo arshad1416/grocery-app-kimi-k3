@@ -2,13 +2,13 @@
 
 **Status:** Design Document  
 **Last Updated:** 2026-06-15  
-**Depends On:** `ARCHITECTURE-PRICE-LOOKUP.md`, `flippscrape.py`, Turso DB (`stophop-arshad1416`)
+**Depends On:** `ARCHITECTURE-PRICE-LOOKUP.md`, `flippscrape.py`, Turso DB (`pantryrun-arshad1416`)
 
 ---
 
 ## 1. Problem Statement
 
-Flipp only provides **flyer deals** (promotional/discounted items with expiry dates). Regular shelf prices — the everyday price of Milk, Pork Chops, Cheddar Cheese — are not available through Flipp. To enable meaningful price comparison and trip optimization, StopHop needs access to **current regular prices** from major Canadian grocery chains.
+Flipp only provides **flyer deals** (promotional/discounted items with expiry dates). Regular shelf prices — the everyday price of Milk, Pork Chops, Cheddar Cheese — are not available through Flipp. To enable meaningful price comparison and trip optimization, PantryRun needs access to **current regular prices** from major Canadian grocery chains.
 
 ### What We Have vs What We Need
 
@@ -458,10 +458,10 @@ class LoblawsGroupScraper(BaseScraper):
 ```python
 #!/usr/bin/env python3
 """
-store_prices_scrape.py — Grocery shelf price scraper for StopHop.
+store_prices_scrape.py — Grocery shelf price scraper for PantryRun.
 
 Scrapes current regular prices from Canadian grocery store websites
-and writes results to the stophop Turso database.
+and writes results to the pantryrun Turso database.
 
 Usage:
   python3 store_prices_scrape.py --postal-code L0R2H4 --items "milk,bread,eggs"
@@ -477,14 +477,14 @@ import time
 from datetime import datetime, timezone
 
 # Turso write support (reuses flippscrape patterns)
-STOPHOP_TURSO_URL = "https://stophop-arshad1416.aws-us-east-1.turso.io"
+PANTRYRUN_TURSO_URL = "https://pantryrun-arshad1416.aws-us-east-1.turso.io"
 
 def _get_turso_token() -> str:
-    token_path = os.path.expanduser("~/.hermes/stophop_turso_token.txt")
+    token_path = os.path.expanduser("~/.hermes/pantryrun_turso_token.txt")
     if os.path.exists(token_path):
         with open(token_path) as f:
             return f.read().strip()
-    return os.environ.get("STOPHOP_TURSO_TOKEN", "")
+    return os.environ.get("PANTRYRUN_TURSO_TOKEN", "")
 
 def write_to_turso(prices: list[dict], url: str, token: str) -> dict:
     """Batch insert prices into store_prices table."""
@@ -581,7 +581,7 @@ def main():
     if args.turso:
         token = _get_turso_token()
         if token:
-            stats = write_to_turso(all_prices, STOPHOP_TURSO_URL, token)
+            stats = write_to_turso(all_prices, PANTRYRUN_TURSO_URL, token)
             if not args.quiet:
                 print(f"Turso: {stats['inserted']} inserted, {stats['errors']} errors")
 

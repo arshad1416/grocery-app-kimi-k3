@@ -1,12 +1,12 @@
 [
   {
-    "_comment": "Android App Links verification file. Deploy at https://groceryapp.app/.well-known/assetlinks.json (Content-Type application/json) so android:autoVerify links (groceryapp://invite / https://groceryapp.app/invite) open the app without a chooser. Replace the sha256_cert_fingerprints value with the SHA-256 fingerprint of your UPLOAD/signing certificate. If you use Google Play App Signing (recommended), copy the fingerprint Play generates (Play Console → Setup → App integrity → App signing key certificate). For a local keystore: keytool -list -v -keystore stophop-upload.keystore -alias stophop-upload | grep SHA256.",
+    "_comment": "Android App Links verification file. Deploy at https://groceryapp.app/.well-known/assetlinks.json (Content-Type application/json) so android:autoVerify links (groceryapp://invite / https://groceryapp.app/invite) open the app without a chooser. Replace the sha256_cert_fingerprints value with the SHA-256 fingerprint of your UPLOAD/signing certificate. If you use Google Play App Signing (recommended), copy the fingerprint Play generates (Play Console → Setup → App integrity → App signing key certificate). For a local keystore: keytool -list -v -keystore pantryrun-upload.keystore -alias pantryrun-upload | grep SHA256.",
     "relation": [
       "delegate_permission/common.handle_all_urls"
     ],
     "target": {
       "namespace": "android_app",
-      "package_name": "com.shiftlogichq.stophop",
+      "package_name": "com.shiftlogichq.pantryrun",
       "sha256_cert_fingerprints": [
         "REPLACE_WITH_SHA256_FINGERPRINT_OF_YOUR_SIGNING_CERT"
       ]

@@ -1,5 +1,5 @@
 /**
- * Turso schema migrations for StopHop product database.
+ * Turso schema migrations for PantryRun product database.
  *
  * Run these against your Turso database via tursoClient.execute().
  * The 'products' table stores the canonical product record for each barcode.
