@@ -33,12 +33,25 @@ services:
       # See relay-server/POOL-ISOLATION.md. Set POOL_PORT=8080 to serve both
       # on one origin (NOT recommended for a public community pool).
       - POOL_PORT=8081
+      # Blind-RSA token issuer + pool verification keys. Without these a
+      # default deploy returns 500 on token issuance and pool contribution.
+      # Generate the pair locally BEFORE `docker compose up`:
+      #   cd relay-server && node tokens/blind-rsa-keygen.js
+      # The keys/ dir is gitignored and bind-mounted read-only below — the
+      # private key never enters the image or the repository. Rotating the
+      # pair invalidates every outstanding blind token; the issuer and the
+      # pool read from the same mount, so they cut over together on restart.
+      - ISSUER_PRIVATE_KEY_PATH=/app/keys/issuer-private-key.pem
+      - ISSUER_PUBLIC_KEY_PATH=/app/keys/issuer-public-key.pem
       # Flyer AI extraction backend (POST /api/extract/flyer).
       # Self-host (free): point OLLAMA_URL at an Ollama instance running a
       # vision model (default model: qwen2.5-vl:7b).
       # Managed (paid): set QWEN_API_KEY for DashScope qwen-vl-max instead.
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434/api/generate}
       - QWEN_API_KEY=${QWEN_API_KEY:-}
+    volumes:
+      # Issuer keypair (generated locally, gitignored) — read-only mount.
+      - ./relay-server/keys:/app/keys:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 30s
