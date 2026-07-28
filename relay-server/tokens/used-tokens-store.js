@@ -2,8 +2,21 @@
  * Used Tokens Store — Persisted spent-set for single-use token enforcement.
  *
  * Provides checkAndMark(tokenStr) to atomically check-and-mark a token as used.
- * Persists to disk with debounced writes and compaction.
- * Cleans entries older than 24h TTL on a periodic interval.
+ * Persists to disk with debounced writes.
+ *
+ * DESIGN (double-spend closure — see GOAL_PROMPT_NOTES.md):
+ * Spent records are kept PERMANENTLY, compacted by storing a SHA-256 hash of
+ * the token instead of the token string. The token format (v2.<base64> =
+ * 256-byte RSA signature || 32-byte client-chosen blinded nonce) carries no
+ * expiry, no issuance timestamp and no epoch identifier, so the verifier has
+ * no way to reject a token for being old — which means ANY finite TTL on the
+ * spent set reopens a double-spend window the moment a record is pruned. The
+ * former 24h TTL did exactly that. Hashing keeps the permanent set compact
+ * (32 bytes of entropy per record instead of ~390 chars of token string) and
+ * means the store never holds a spendable token value at rest.
+ *
+ * The ttlMs option is retained for construction compatibility but NO LONGER
+ * causes spent records to be pruned; cleanExpired() is a deliberate no-op.
  *
  * Usage:
  *   const store = new UsedTokensStore();
@@ -11,35 +24,46 @@
  *   const isNew = await store.checkAndMark(tokenStr);  // false if already used
  */
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_STORE_FILE = path.join(__dirname, '..', 'used-tokens.json');
-const DEFAULT_TTL_MS = 86_400_000; // 24 hours
-const DEFAULT_CLEANUP_INTERVAL_MS = 3_600_000; // 1 hour
 const DEBOUNCE_WRITE_MS = 500; // 500ms
+
+/** SHA-256 hex digest of a token string (the stored key). */
+function hashToken(tokenStr) {
+  return crypto.createHash('sha256').update(tokenStr, 'utf-8').digest('hex');
+}
+
+/** Whether a persisted key already looks like a SHA-256 hex hash. */
+function isHashedKey(key) {
+  return /^[0-9a-f]{64}$/.test(key);
+}
 
 class UsedTokensStore {
   /**
    * @param {object} options
    * @param {string} [options.storeFile] - Path to the JSON store file
-   * @param {number} [options.ttlMs] - Time-to-live for entries (default: 24h)
-   * @param {number} [options.cleanupIntervalMs] - Cleanup interval (default: 1h)
+   * @param {number} [options.ttlMs] - Accepted for compatibility; spent
+   *   records are permanent and are NOT pruned (see module doc).
+   * @param {number} [options.cleanupIntervalMs] - Accepted for compatibility;
+   *   no cleanup timer runs because nothing expires.
    */
   constructor(options = {}) {
     this.storeFile = options.storeFile || DEFAULT_STORE_FILE;
-    this.ttlMs = options.ttlMs || DEFAULT_TTL_MS;
-    this.cleanupIntervalMs = options.cleanupIntervalMs || DEFAULT_CLEANUP_INTERVAL_MS;
+    this.ttlMs = options.ttlMs || null; // informational only — never prunes
 
-    /** Map<tokenStr, timestamp> */
+    /** Map<sha256(tokenStr) hex, firstSpentAt timestamp> */
     this._tokens = new Map();
     this._saveTimeout = null;
-    this._cleanupTimer = null;
     this._loaded = false;
   }
 
   /**
    * Load the store from disk. Must be called before using the store.
+   * Legacy entries keyed on the raw token string are migrated to hashes.
+   * Nothing is pruned on load — spent means spent, forever.
    * @returns {Promise<void>}
    */
   async loadOnStartup() {
@@ -47,20 +71,24 @@ class UsedTokensStore {
       if (fs.existsSync(this.storeFile)) {
         const raw = fs.readFileSync(this.storeFile, 'utf-8');
         const data = JSON.parse(raw);
-        const now = Date.now();
         let loaded = 0;
-        let pruned = 0;
-        for (const [token, ts] of Object.entries(data)) {
-          if (now - ts < this.ttlMs) {
-            this._tokens.set(token, ts);
-            loaded++;
+        let migrated = 0;
+        for (const [key, ts] of Object.entries(data)) {
+          if (isHashedKey(key)) {
+            this._tokens.set(key, ts);
           } else {
-            pruned++;
+            // Legacy raw-token entry from the pre-hash format
+            this._tokens.set(hashToken(key), ts);
+            migrated++;
           }
+          loaded++;
         }
         console.log(
-          `[used-tokens] Loaded ${loaded} entries (pruned ${pruned} expired) from ${this.storeFile}`
+          `[used-tokens] Loaded ${loaded} entries (migrated ${migrated} legacy) from ${this.storeFile}`
         );
+        if (migrated > 0) {
+          this._saveSync();
+        }
       } else {
         console.log(`[used-tokens] No store file found at ${this.storeFile}, starting fresh`);
       }
@@ -68,9 +96,6 @@ class UsedTokensStore {
       console.warn(`[used-tokens] Failed to load store: ${err.message}. Starting fresh.`);
     }
     this._loaded = true;
-
-    // Start periodic cleanup
-    this._startCleanup();
     return;
   }
 
@@ -85,11 +110,12 @@ class UsedTokensStore {
       throw new Error('UsedTokensStore not loaded. Call loadOnStartup() first.');
     }
 
-    if (this._tokens.has(tokenStr)) {
+    const key = hashToken(tokenStr);
+    if (this._tokens.has(key)) {
       return false; // Already used
     }
 
-    this._tokens.set(tokenStr, Date.now());
+    this._tokens.set(key, Date.now());
     this._debouncedSave();
     return true;
   }
@@ -100,7 +126,7 @@ class UsedTokensStore {
    * @returns {boolean}
    */
   isUsed(tokenStr) {
-    return this._tokens.has(tokenStr);
+    return this._tokens.has(hashToken(tokenStr));
   }
 
   /**
@@ -112,23 +138,13 @@ class UsedTokensStore {
   }
 
   /**
-   * Remove entries older than TTL.
-   * @returns {number} Number of entries cleaned
+   * Deliberate no-op. Spent-token records are permanent: the token format
+   * has no expiry the verifier can check, so pruning a record makes the
+   * token spendable again. Kept so existing callers/tests don't break.
+   * @returns {number} Always 0.
    */
   cleanExpired() {
-    const now = Date.now();
-    let cleaned = 0;
-    for (const [token, ts] of this._tokens) {
-      if (now - ts > this.ttlMs) {
-        this._tokens.delete(token);
-        cleaned++;
-      }
-    }
-    if (cleaned > 0) {
-      console.log(`[used-tokens] Cleaned ${cleaned} expired entries`);
-      this._saveSync();
-    }
-    return cleaned;
+    return 0;
   }
 
   /**
@@ -161,30 +177,9 @@ class UsedTokensStore {
   }
 
   /**
-   * Start the periodic cleanup timer.
-   */
-  _startCleanup() {
-    if (this._cleanupTimer) {
-      clearInterval(this._cleanupTimer);
-    }
-    this._cleanupTimer = setInterval(() => {
-      this.cleanExpired();
-    }, this.cleanupIntervalMs);
-
-    // Allow the timer to not prevent process exit
-    if (this._cleanupTimer.unref) {
-      this._cleanupTimer.unref();
-    }
-  }
-
-  /**
-   * Stop the cleanup timer and flush writes.
+   * Flush pending writes.
    */
   async shutdown() {
-    if (this._cleanupTimer) {
-      clearInterval(this._cleanupTimer);
-      this._cleanupTimer = null;
-    }
     if (this._saveTimeout) {
       clearTimeout(this._saveTimeout);
       this._saveTimeout = null;

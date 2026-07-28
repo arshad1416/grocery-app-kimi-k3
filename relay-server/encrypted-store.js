@@ -1,7 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = path.join(__dirname, 'data');
+// State directory override: when RELAY_DATA_DIR is set (the Docker deployment
+// sets it to the mounted volume, e.g. /data), encrypted updates live under
+// $RELAY_DATA_DIR/data instead of alongside the application code in /app.
+const DATA_DIR = process.env.RELAY_DATA_DIR
+  ? path.join(process.env.RELAY_DATA_DIR, 'data')
+  : path.join(__dirname, 'data');
 const UPDATES_FILE = path.join(DATA_DIR, 'encrypted-updates.json');
 
 // Ensure data directory exists

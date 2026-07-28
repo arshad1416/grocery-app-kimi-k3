@@ -20,6 +20,7 @@
  */
 
 const { aggregatePriceReports } = require('./aggregator');
+const { collectBody } = require('../lib/collect-body');
 
 // ─── Token Configuration ────────────────────────────────────────────────────
 
@@ -225,18 +226,8 @@ function handlePoolRequest(req, res, store) {
   res.end(JSON.stringify({ error: 'Not Found' }));
 }
 
-/**
- * Parse the request body into a string, wrapped in a Promise
- * to avoid async race conditions with streaming events.
- */
-function parseBody(req) {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
-}
+/** Max contribution body size (bytes). */
+const MAX_CONTRIBUTE_BODY_BYTES = 4096;
 
 /**
  * Handle a contribution POST request with Blind RSA token verification.
@@ -294,9 +285,10 @@ async function handleContribute(req, res, store) {
   }
 
   // ── Body Parsing & Validation ────────────────────────────────────────
-  const body = await parseBody(req);
-  // Enforce body size limit
-  if (body.length > 4096) {
+  // Shared streaming-capped collector (lib/collect-body.js): rejects while
+  // bytes arrive instead of buffering the whole body first.
+  const body = await collectBody(req, MAX_CONTRIBUTE_BODY_BYTES);
+  if (body === null) {
     res.writeHead(413, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Request body too large (max 4096 bytes)' }));
     return;

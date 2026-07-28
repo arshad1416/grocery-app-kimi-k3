@@ -13,6 +13,7 @@
  */
 
 const url = require('url');
+const { collectBody } = require('../lib/collect-body');
 
 // ─── Rate Limiting ──────────────────────────────────────────────────────────
 
@@ -158,37 +159,7 @@ async function handleExtractRequest(req, res, enrolledDevices) {
   res.end(JSON.stringify({ prices }));
 }
 
-/**
- * Collect the body of an HTTP request with a max size limit.
- *
- * @param {object} req - HTTP request
- * @param {number} maxBytes - Maximum allowed body size
- * @returns {Promise<string|null>} Body string, or null if size exceeded
- */
-function collectBody(req, maxBytes) {
-  return new Promise((resolve) => {
-    if (req.headers['content-length'] && parseInt(req.headers['content-length'], 10) > maxBytes) {
-      resolve(null);
-      return;
-    }
-
-    let body = '';
-    let totalBytes = 0;
-
-    req.on('data', (chunk) => {
-      totalBytes += chunk.length;
-      if (totalBytes > maxBytes) {
-        req.destroy(); // Stop receiving data
-        resolve(null);
-        return;
-      }
-      body += chunk;
-    });
-
-    req.on('end', () => resolve(body));
-
-    req.on('error', () => resolve(null));
-  });
-}
+// collectBody used to live here; it is now the shared lib/collect-body.js so
+// every body-buffering endpoint routes through one audited implementation.
 
 module.exports = { handleExtractRequest };

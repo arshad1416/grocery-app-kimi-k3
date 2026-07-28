@@ -379,13 +379,13 @@ describe('Blind RSA Token Issuer', () => {
       try { fs.unlinkSync(tmpFile); } catch {}
     });
 
-    it('cleans expired entries', async () => {
+    it('cleanExpired is a no-op — tokens are permanent (double-spend closure)', async () => {
       const tmpFile = path.join(__dirname, '..', '..', '__test_cleanup__.json');
       try { fs.unlinkSync(tmpFile); } catch {}
 
       const store = new UsedTokensStore({
         storeFile: tmpFile,
-        ttlMs: 1, // 1ms TTL — entries expire immediately
+        ttlMs: 1, // previously this would have expired — now it must NOT
         cleanupIntervalMs: 600000,
       });
       await store.loadOnStartup();
@@ -393,11 +393,14 @@ describe('Blind RSA Token Issuer', () => {
       store.checkAndMark('expired-token');
       expect(store.isUsed('expired-token')).toBe(true);
 
-      // Wait for TTL to expire
+      // Wait longer than the declared TTL
       await new Promise((r) => setTimeout(r, 10));
 
-      store.cleanExpired();
-      expect(store.isUsed('expired-token')).toBe(false);
+      // cleanExpired is now a deliberate no-op: spent means spent forever.
+      const cleaned = store.cleanExpired();
+      expect(cleaned).toBe(0);
+      // Token MUST still be marked as used — double-spend window closed.
+      expect(store.isUsed('expired-token')).toBe(true);
 
       await store.shutdown();
       try { fs.unlinkSync(tmpFile); } catch {}

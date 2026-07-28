@@ -49,9 +49,17 @@ services:
       # Managed (paid): set QWEN_API_KEY for DashScope qwen-vl-max instead.
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434/api/generate}
       - QWEN_API_KEY=${QWEN_API_KEY:-}
+      # All relay state (relay-state.json, used-tokens.json, data/) is written
+      # under RELAY_DATA_DIR — a dedicated path OUTSIDE /app — so the volume
+      # mount does NOT shadow the application code.
+      - RELAY_DATA_DIR=/data
     volumes:
       # Issuer keypair (generated locally, gitignored) — read-only mount.
       - ./relay-server/keys:/app/keys:ro
+      # Persistent relay state — survives container rebuilds. The Dockerfile
+      # pre-creates /data owned by `node`, so the first named-volume mount
+      # inherits that ownership.
+      - relay-data:/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 30s
@@ -59,11 +67,9 @@ services:
       retries: 3
       start_period: 10s
     # The relay is zero-knowledge (stores only client-side-encrypted ciphertext)
-    # but NOT stateless: it persists enrollment state (relay-state.json), Yjs doc
-    # state (relay-docs.json), and encrypted updates (data/encrypted-updates.json)
-    # inside the container. Encrypted updates are aged out after UPDATE_TTL_MS
-    # (default 30 days). Mount a volume if you want that state to survive
-    # container rebuilds; omit it for wipe-on-rebuild behavior.
+    # but NOT stateless: it persists enrollment state, Yjs doc state, and
+    # encrypted updates. All state is written under /data (RELAY_DATA_DIR) and
+    # survives restarts and rebuilds via the relay-data volume.
     deploy:
       resources:
         limits:
@@ -74,3 +80,7 @@ networks:
   default:
     name: groceryapp-network
     driver: bridge
+
+volumes:
+  relay-data:
+    name: groceryapp-relay-data

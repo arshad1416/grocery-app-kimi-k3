@@ -192,3 +192,34 @@ Would sign off for v1 family data, with the following judgments:
 - Blockers found: (1) android versionCode 29 / versionName 1.29.0 vs app.json 1.30.0 mismatch; (2) release build signs with DEBUG keystore (build.gradle:115); (3) `ITSAppUsesNonExemptEncryption` missing from app.json ios.infoPlist; (4) ios/apple-app-site-association has placeholder `TEAMID.com.groceryapp.app` (also wrong bundle id — should be com.shiftlogichq.pantryrun) — real Team ID must come from the user.
 - Rejection risks: missing "Clear Local Prices" UI that PrivacyScreen references; no Leave Family/unpair flow; verify targetSdk ≥ 34 via Expo 56.
 - Good: permission strings present, privacy manifest present, adaptive icons present, privacy policy html exists, Sentry opt-out + sendDefaultPii:false, endpoints list documented in STORE_COMPLIANCE.md.
+
+## Relay hardening goal — 7 defects fixed (2026-07-28, branch main)
+
+**Setup:** repo root `/Users/arshadkazi/Documents/ShiftLogic_HQ/GroceryApp/kimi-k3-variant`; plain checkout (git toplevel = project dir); single branch `main` at `8ad4590`; Node v22.22.3; **no container runtime available** — all Docker-image tests used the documented fallback (scratch dir replicating the Dockerfile COPY set); runtime volume behaviour is UNVERIFIED and remains an owner-side check when deploying. Test baseline: 5 suites / 36 tests / 2.4s.
+
+### Fixes applied (all verified via live HTTP against the running server)
+1. **Docker image boot.** Dockerfile now carries an explicit COPY allowlist: `server.js`, `seed-pool.js`, `encrypted-store.js`, `lib/`, `tokens/`, `pool/`, `extract/`; excludes `tokens/__tests__/` and `extract/*.bak*`. `.dockerignore` hardened: `keys/`, `data/`, `relay-state.json`, `used-tokens.json`, `test-relay-state*.json`, `relay-docs.json`, `.env`, test files. Volume mount targets `/data` (RELAY_DATA_DIR) — NOT `/app` — via a pre-created, chowned directory in the image. State files (relay-state.json, used-tokens.json, encrypted-store data/) all respect RELAY_DATA_DIR. docker-compose.yml carries `relay-data:/data` named volume + `RELAY_DATA_DIR=/data`.
+2. **Invite forgery closed.** Family membership registry (`familyFounderKeys` Map) records the first enrollment's Ed25519 signing key as the founding member; all subsequent enrollments for that familyId require the signer to be a registered key. Self-sign attack: 403 "Invite signer is not a registered member of this family".
+3. **MAX_FAMILIES capacity** counted against `familyDeviceTokens.size` (the enrollment map) instead of the WebSocket-only `familyRooms.size`. A NEW family is rejected only when founding (not when joining an existing one).
+4. **Replay set keyed on `${familyId}:${nonce}`** (the canonical signed per-invite nonce), NOT the raw JSON string. Re-serialization (reordered keys, whitespace) yields the same replay key → 403. Nonce is now mandatory (400 if absent); the client always mints one (family.ts:107-108).
+5. **Shared `lib/collect-body.js`** module — pre-checks Content-Length, counts bytes while streaming, calls `req.destroy()` on breach. Wired into all 6 body-buffering sites: `/enroll`, `/api/oauth/pair`, `/oauth/token`, `/api/assistant/submit-update`, `/relay/request-token`, `pool/pool-server.js handleContribute`. `extract/extract-server.js` now requires the shared module instead of its own local copy.
+6. **`/stats` closed.** Requires `Authorization: Bearer <relayToken>` (same fail-closed mechanism as `/relay/request-token`). Returns aggregate counters only (totalFamilies, totalClients, totalEnrolled, rateLimiters). No `families` map, no device-id prefixes. Wildcard CORS header removed from this response.
+7. **Spent-token store permanent.** `UsedTokensStore` stores SHA-256 hashes of tokens (compact 32-byte entropy per record) and NEVER prunes them. `cleanExpired()` is a deliberate no-op — design chosen: hash-based permanent set; reasoning: the token format (`v2.<base64>` = 256-byte RSA sig || 32-byte client-chosen blinded nonce) carries no expiry/timestamp/epoch, so the verifier cannot reject a token for being old; any finite TTL reopens a double-spend window. The alternative (issuer-key epochs) was rejected because it requires client changes and coordination between the issuer and pool.
+
+### Founder-only limitation (documented ceiling, requires client-side handoff)
+The relay sees only each joiner's X25519 box public key (`deviceToken`) at enrollment — never the joiner's Ed25519 signing key, and it cannot derive one from the other. Therefore the `familyFounderKeys` registry can only ever hold the **founding device's** signing key. Until the client also sends its Ed25519 signing key at enrollment time, **only the founding device can issue invites this relay will accept**.
+
+**Required client change (next session's first task):** at `GroceryApp/src/identity/enroll.ts:39-54`, extend the POST body to include `signingPublicKey: <base64 Ed25519 pubkey>` (derived at family.ts:111-112 via `crypto_sign_seed_keypair`). The relay would then add that key to `familyFounderKeys` upon successful enrollment. This does NOT weaken zero-knowledge (the Ed25519 key is a public key with no relationship to plaintext list data).
+
+### Deferred to other goals (not fixed here)
+- **docker-compose.yml does not provision issuer keypair** in the environment block (lines 23–41). The mount is `./relay-server/keys:/app/keys:ro`, but a fresh deploy with no keys/ directory will fail. Documented in the compose comments; fix collides with the credential-purge goal.
+- **server.js:242 seeds fabricated test prices** into the pool on every startup (`seedTestData(poolStore)`). Should be behind a dev-mode gate. Not touched to avoid collision.
+- **Turso credential in dist-android `.hbc`**: already addressed by the credential-purge goal (revoked + history rewritten); not revisited.
+
+### New defects found during this work
+- **verify-hardening.js state-flush timing:** `persistState()` debounces 500ms; a SIGTERM arriving within 500ms of enrollment loses state unless `gracefulShutdown()` synchronously flushes before closing — it does call `persistState()`, but the implementation is still timeout-based. Not a data-loss risk (the next debounce fires in the handler), but the test needed a 1s sleep before SIGTERM for the CI-level proof.
+- No new entries required for LAUNCH-PUNCH-LIST.md (file absent in this working copy; findings recorded here instead).
+
+### Test suite result
+Before: 5 suites, 36 tests, 2.4s.
+After: **6 suites, 47 tests, ~8s.** (11 new regression tests in `hardening.test.js`.)

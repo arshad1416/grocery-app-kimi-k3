@@ -24,6 +24,23 @@ const path = require('path');
 // ─── Blind RSA Token Issuer ──────────────────────────────────────────────────
 
 const { UsedTokensStore } = require('./tokens/used-tokens-store');
+const { collectBody } = require('./lib/collect-body');
+
+// ─── Dedicated State Directory ──────────────────────────────────────────────
+// When RELAY_DATA_DIR is set, ALL persisted relay state (relay-state.json,
+// used-tokens.json, data/) lives under it instead of /app. This lets a Docker
+// volume be mounted at that directory WITHOUT shadowing the application code
+// (mounting a volume over /app would hide server.js and the container would
+// stop booting). See docker-compose.yml: RELAY_DATA_DIR=/data + relay-data
+// volume.
+const RELAY_DATA_DIR = process.env.RELAY_DATA_DIR || null;
+if (RELAY_DATA_DIR) {
+  try {
+    fs.mkdirSync(RELAY_DATA_DIR, { recursive: true });
+  } catch (err) {
+    console.error(`[state] Cannot create RELAY_DATA_DIR "${RELAY_DATA_DIR}": ${err.message}`);
+  }
+}
 
 /**
  * Lazy-loaded BlindRSA suite instance and issuer private key.
@@ -56,7 +73,9 @@ const tokenRateLimiters = new Map();
  * Used tokens store for single-use enforcement at the pool level.
  * Shared with pool-server via handlePoolRequest pass-through.
  */
-const usedTokensStore = new UsedTokensStore();
+const usedTokensStore = new UsedTokensStore(
+  RELAY_DATA_DIR ? { storeFile: path.join(RELAY_DATA_DIR, 'used-tokens.json') } : {}
+);
 
 /**
  * Parse a PEM-encoded key to DER bytes (ArrayBuffer).
@@ -161,7 +180,9 @@ const TLS_KEY_PATH = process.env.TLS_KEY;
 // ─── State Persistence ──────────────────────────────────────────────────────────
 
 /** File path for persisting relay state across restarts. */
-const STATE_FILE = process.env.RELAY_STATE_FILE || './relay-state.json';
+const STATE_FILE =
+  process.env.RELAY_STATE_FILE ||
+  (RELAY_DATA_DIR ? path.join(RELAY_DATA_DIR, 'relay-state.json') : './relay-state.json');
 
 // ─── Voice Assistant OAuth2 & Keys ──────────────────────────────────────────────
 
@@ -262,10 +283,21 @@ function serializeState() {
     tokens[token] = data;
   }
 
+  const usedInvites = {};
+  for (const [key, expiresAt] of usedInviteSignatures) {
+    usedInvites[key] = expiresAt;
+  }
+
+  const founders = {};
+  for (const [familyId, keys] of familyFounderKeys) {
+    founders[familyId] = Array.from(keys);
+  }
+
   return {
     enrolledDevices: enrolled,
     familyDeviceTokens: families,
-    usedInviteSignatures: Array.from(usedInviteSignatures),
+    usedInviteSignatures: usedInvites,
+    familyFounderKeys: founders,
     oauthTokens: tokens,
   };
 }
@@ -291,8 +323,34 @@ function deserializeState(saved) {
   }
 
   if (saved.usedInviteSignatures) {
-    for (const sig of saved.usedInviteSignatures) {
-      usedInviteSignatures.add(sig);
+    if (Array.isArray(saved.usedInviteSignatures)) {
+      // Legacy format: array of raw familyInviteToken JSON strings. Convert
+      // to the canonical `${familyId}:${nonce}` key; entries without a nonce
+      // cannot be replayed under the new scheme (nonce-less invites are now
+      // rejected outright) so they are dropped.
+      for (const raw of saved.usedInviteSignatures) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.familyId && parsed.nonce) {
+            usedInviteSignatures.set(
+              `${parsed.familyId}:${parsed.nonce}`,
+              parsed.expiresAt || Date.now(),
+            );
+          }
+        } catch {
+          // Malformed legacy entry — skip
+        }
+      }
+    } else {
+      for (const [key, expiresAt] of Object.entries(saved.usedInviteSignatures)) {
+        usedInviteSignatures.set(key, expiresAt);
+      }
+    }
+  }
+
+  if (saved.familyFounderKeys) {
+    for (const [familyId, keys] of Object.entries(saved.familyFounderKeys)) {
+      familyFounderKeys.set(familyId, new Set(keys));
     }
   }
 
@@ -374,11 +432,34 @@ const rateLimiters = new Map();
 const familyDeviceTokens = new Map();
 
 /**
- * Set<string> — used invite tokens (signature-based replay protection).
- * Prevents a leaked invite token from being replayed multiple times.
- * Entries are never evicted; invites have a finite TTL so memory is bounded.
+ * Map<inviteKey, expiresAt> — used invite nonces (replay protection).
+ * Keyed on `${familyId}:${nonce}` — canonical fields from the SIGNED payload —
+ * rather than the raw familyInviteToken string, so re-serializing the JSON
+ * (reordered keys, whitespace) cannot bypass one-time-use enforcement.
+ * Entries carry the invite's expiresAt so the hourly sweep can evict them
+ * once the invite could no longer be accepted anyway; memory stays bounded.
  */
-const usedInviteSignatures = new Set();
+const usedInviteSignatures = new Map();
+
+/**
+ * Map<familyId, Set<signerKey>> — family membership registry of Ed25519
+ * signing keys authorized to issue invites for a family.
+ *
+ * The invite signature used to be verified against the signer key EMBEDDED IN
+ * THE INVITE ITSELF (deviceId), so anyone could mint a keypair, pick any
+ * familyId, self-sign, and enroll. The registry closes that: the first
+ * enrollment for a previously-unseen familyId records the inviter's signing
+ * key as the founding member; every later enrollment for that familyId
+ * requires the invite's signer to be a key already recorded for it.
+ *
+ * KNOWN CEILING (documented in GOAL_PROMPT_NOTES.md): /enroll only receives
+ * the joiner's X25519 box public key (deviceToken), never the joiner's
+ * Ed25519 signing key, and the relay cannot derive one from the other. So the
+ * registry can only ever hold founding signers — until the client also sends
+ * its signing key at enrollment, only the founding device can issue invites
+ * this relay will accept.
+ */
+const familyFounderKeys = new Map();
 
 // ─── Ed25519 Signature Verification ──────────────────────────────────────────
 
@@ -551,11 +632,9 @@ const server = createServer((req, res) => {
 
   // Device enrollment
   if (req.url === '/enroll' && req.method === 'POST') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
-      // Enforce body size limit
-      if (body.length > 4096) {
+    collectBody(req, 4096).then((body) => {
+      // Streaming cap exceeded (connection already destroyed) or read error
+      if (body === null) {
         res.writeHead(413, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Request body too large (max 4096 bytes)' }));
         return;
@@ -591,6 +670,16 @@ const server = createServer((req, res) => {
           return;
         }
 
+        // Require the per-invite nonce. The client has always minted one
+        // (family.ts mints 16 random bytes into the signed payload), and the
+        // nonce is what one-time-use enforcement is keyed on — accepting a
+        // nonce-less invite would reopen the re-serialization replay bypass.
+        if (!nonce || typeof nonce !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invite token is missing the required nonce' }));
+          return;
+        }
+
         // Check expiry
         if (Date.now() > expiresAt) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -605,7 +694,7 @@ const server = createServer((req, res) => {
           familyId,
           deviceId: inviterDeviceId,
           expiresAt,
-          ...(nonce !== undefined ? { nonce } : {}),
+          nonce,
         });
 
         const signatureValid = verifyEd25519Signature(
@@ -620,18 +709,37 @@ const server = createServer((req, res) => {
           return;
         }
 
-        // Replay protection: reject invite tokens that have already been used.
-        // Since invites have finite TTL and signatures are unique per invite,
-        // tracking by the full familyInviteToken string is precise.
-        if (usedInviteSignatures.has(familyInviteToken)) {
+        // Membership registry: a valid signature only proves the invite was
+        // signed by the key embedded in it — it says nothing about whether
+        // that key belongs to this family. For a family the relay has seen
+        // before, the signer must already be a registered signing key;
+        // otherwise anyone could self-sign an invite into any familyId.
+        // A previously-unseen familyId is founded by this enrollment and the
+        // inviter's signing key is recorded below as the founding member.
+        const registeredSigners = familyFounderKeys.get(familyId);
+        if (registeredSigners && !registeredSigners.has(inviterDeviceId)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invite signer is not a registered member of this family' }));
+          return;
+        }
+
+        // Replay protection: keyed on the signed per-invite nonce (scoped to
+        // the familyId), NOT the raw familyInviteToken string — re-serializing
+        // the same JSON (reordered keys, whitespace) must not mint a fresh
+        // usable invite.
+        const inviteReplayKey = `${familyId}:${nonce}`;
+        if (usedInviteSignatures.has(inviteReplayKey)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Invite token has already been used' }));
           return;
         }
 
-        // Check family limits
-        const totalFamilies = familyRooms.size;
-        if (totalFamilies >= MAX_FAMILIES) {
+        // Check family limits against enrollments (familyDeviceTokens), not
+        // familyRooms — the latter is only populated by the WebSocket path,
+        // so counting it let enrollments grow without bound. Joining an
+        // already-enrolled family is allowed even at capacity; only founding
+        // a NEW family counts against MAX_FAMILIES.
+        if (!familyDeviceTokens.has(familyId) && familyDeviceTokens.size >= MAX_FAMILIES) {
           res.writeHead(503, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Server at maximum family capacity' }));
           return;
@@ -645,8 +753,14 @@ const server = createServer((req, res) => {
           return;
         }
 
-        // Mark invite as used (replay protection)
-        usedInviteSignatures.add(familyInviteToken);
+        // Mark invite as used (replay protection). Keep the entry until the
+        // invite's own expiry passes; the hourly sweep evicts it after that.
+        usedInviteSignatures.set(inviteReplayKey, expiresAt);
+
+        // Record the founding signer for a previously-unseen familyId.
+        if (!familyFounderKeys.has(familyId)) {
+          familyFounderKeys.set(familyId, new Set([inviterDeviceId]));
+        }
 
         // Generate a relay token (opaque routing token)
         const relayToken = crypto.randomBytes(32).toString('hex');
@@ -684,27 +798,39 @@ const server = createServer((req, res) => {
     return;
   }
 
-  // Stats page
+  // Stats page — authenticated, aggregate counters only.
+  // Previously this endpoint was unauthenticated and returned every active
+  // familyId plus a 12-char prefix of each connected device id (a stable
+  // fingerprint), readable by any web page thanks to the server-wide
+  // Access-Control-Allow-Origin: *. It now requires an enrolled device's
+  // relayToken (the same fail-closed mechanism as POST /relay/request-token),
+  // returns no per-family data at all, and suppresses the wildcard CORS
+  // header on the response.
   if (req.url === '/stats' && req.method === 'GET') {
+    // No cross-origin reads of operational data
+    res.removeHeader('Access-Control-Allow-Origin');
+
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Missing or invalid Authorization header. Expected: Bearer <relayToken>' }));
+      return;
+    }
+
+    const statsToken = authHeader.slice('Bearer '.length).trim();
+    const statsEnrollment = enrolledDevices.get(statsToken);
+    if (!statsEnrollment || Date.now() > statsEnrollment.expiresAt) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid relay token' }));
+      return;
+    }
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
-
-    const stats = {};
-    familyRooms.forEach((clients, familyId) => {
-      stats[familyId] = {
-        connectedClients: clients.size,
-        deviceIds: Array.from(clients).map((ws) => {
-          const info = clientInfo.get(ws);
-          return info ? info.deviceId.slice(0, 12) + '...' : 'unknown';
-        }),
-      };
-    });
-
     res.end(JSON.stringify({
       uptime: process.uptime(),
-      totalFamilies: familyRooms.size,
+      totalFamilies: familyDeviceTokens.size,
       totalClients: clientInfo.size,
       totalEnrolled: enrolledDevices.size,
-      families: stats,
       rateLimiters: rateLimiters.size,
       config: {
         maxFamilies: MAX_FAMILIES,
@@ -823,9 +949,12 @@ const server = createServer((req, res) => {
 
   // POST /api/oauth/pair — pairing submission from mobile app
   if (req.url === '/api/oauth/pair' && req.method === 'POST') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    collectBody(req, 4096).then((body) => {
+      if (body === null) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Request body too large (max 4096 bytes)' }));
+        return;
+      }
       try {
         const { pairingCode, familyId, encryptedMasterKey } = JSON.parse(body);
         if (!pairingCode || !familyId || !encryptedMasterKey) {
@@ -859,9 +988,12 @@ const server = createServer((req, res) => {
 
   // POST /oauth/token — oauth2 token exchange
   if (req.url === '/oauth/token' && req.method === 'POST') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    collectBody(req, 4096).then((body) => {
+      if (body === null) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Request body too large (max 4096 bytes)' }));
+        return;
+      }
       try {
         let params;
         const contentType = req.headers['content-type'] || '';
@@ -973,9 +1105,14 @@ const server = createServer((req, res) => {
 
     const { familyId } = tokenData;
 
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    // Encrypted Yjs updates are small; 1MB is generous headroom while still
+    // bounding what an authenticated-but-hostile webhook peer can buffer.
+    collectBody(req, 1024 * 1024).then((body) => {
+      if (body === null) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Request body too large (max 1MB)' }));
+        return;
+      }
       try {
         const { listId, payload } = JSON.parse(body);
         if (!listId || !payload) {
@@ -1426,17 +1563,15 @@ async function handleTokenRequest(req, res) {
     return;
   }
 
-  // 4. Parse body
-  let body = '';
-  req.on('data', (chunk) => { body += chunk; });
-  req.on('end', async () => {
-    // Enforce body size limit
-    if (body.length > 4096) {
-      res.writeHead(413, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Request body too large (max 4096 bytes)' }));
-      return;
-    }
+  // 4. Parse body (streaming cap — see lib/collect-body.js)
+  const body = await collectBody(req, 4096);
+  if (body === null) {
+    res.writeHead(413, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Request body too large (max 4096 bytes)' }));
+    return;
+  }
 
+  {
     let parsed;
     try {
       parsed = JSON.parse(body);
@@ -1470,7 +1605,7 @@ async function handleTokenRequest(req, res) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to sign token' }));
     }
-  });
+  }
 }
 
 // ─── Start ────────────────────────────────═══════════════════════════════════
@@ -1529,18 +1664,13 @@ server.listen(RELAY_PORT, () => {
           cleaned++;
         }
       }
-      // Prune expired invite signatures (parse JSON to check expiresAt)
+      // Prune used-invite entries whose invite expiry has passed (an expired
+      // invite is rejected by the expiry check before the replay set is
+      // consulted, so the entry is no longer needed).
       let prunedInvites = 0;
-      for (const inviteStr of usedInviteSignatures) {
-        try {
-          const parsed = JSON.parse(inviteStr);
-          if (parsed.expiresAt && now > parsed.expiresAt) {
-            usedInviteSignatures.delete(inviteStr);
-            prunedInvites++;
-          }
-        } catch {
-          // Malformed entry — remove it
-          usedInviteSignatures.delete(inviteStr);
+      for (const [inviteKey, inviteExpiresAt] of usedInviteSignatures) {
+        if (typeof inviteExpiresAt !== 'number' || now > inviteExpiresAt) {
+          usedInviteSignatures.delete(inviteKey);
           prunedInvites++;
         }
       }

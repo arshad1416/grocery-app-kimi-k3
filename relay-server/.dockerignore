@@ -3,3 +3,19 @@ npm-debug.log
 .git
 .gitignore
 *.md
+# ── Secrets & local state: must NEVER enter the image ──
+# keys/ holds a live issuer private key; the rest is local relay state.
+keys/
+data/
+relay-state.json
+test-relay-state*.json
+used-tokens.json
+relay-docs.json
+.env
+# ── Test/dev files a directory-level COPY would otherwise pull in ──
+tokens/__tests__/
+extract/*.bak*
+*.test.js
+jest.config.js
+jest.global-setup.js
+test-assistant.js
