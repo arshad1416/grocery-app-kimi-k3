@@ -2,6 +2,19 @@
 
 Running log of findings, decisions, and deferrals. One entry per lesson/decision; update in place rather than duplicating.
 
+## Persistence fault #4 + on-device proof (2026-07-28, commit 95d4ad5)
+- **A fourth stacked persistence fault existed beyond the three known ones:** under Metro's Hermes transform profile (`transform.engine=hermes`, `unstable_transformProfile=hermes-stable` — what every dev build on a device requests), the legacy `@field` decorators in `src/storage/models.ts` compiled to `_initializerWarningHelper` assignments that throw "Decorating class property failed…" on every model instantiation. Every WatermelonDB write failed on-device; reads of empty tables looked fine. Jest never caught it (watermelondb mock stubs decorators).
+- **Dead ends (do not retry):** `overrides.test` in babel.config.js crashes Metro's config loader ("Configuration contains string/RegExp pattern, but no filename was passed to Babel"); a scoped `.babelrc` is not honored under this profile; global loose `@babel/plugin-transform-class-properties` breaks RN's Flow declaration-only statics (`Event.NONE` "Cannot assign to read-only property" crash at startup); patching WatermelonDB's own `@lazy` sites was irrelevant (its shipped root JS is pre-compiled — only OUR models.ts hits the decorator path).
+- **Fix:** models.ts applies `field()`/`relation()` descriptors imperatively via `Object.defineProperty` on prototypes, with TS declaration merging for typing; mock decorator factories now return real descriptors.
+- **Persistence transcript (emulator-5554, Pixel_8_Pro, debug build, Metro :8088):** `pidof` → 22736; `am force-stop` → pidof empty; relaunch → screenshot `/tmp/stophop-persistence-after-relaunch.png` shows the "Persistence Demo" list on Home; opening it shows the typed item **"Persistence Test Apples", 1 pcs, PRODUCE**. sqlite corroboration: 1 row in grocery_lists + 1 in grocery_items with encrypted `{ciphertext,iv,tag}` name. Suite 39/39 (470 pass, 1 skip), tsc exit 0.
+- **Env notes:** this Mac has CommandLineTools only (no simctl, no pod) and no `ios.bundleIdentifier` → iOS remains an owner handoff. Two agent variants share emulator-5554; pin adb with `-s` and verify `dumpsys window | grep mCurrentFocus` before trusting screenshots. Set the RN bundler host by writing `debug_http_host` into `shared_prefs/<pkg>_preferences.xml` (Dev Menu taps are flaky); delete `files/BridgelessReactNativeDevBundle.js` to force a fresh bundle fetch.
+
+## Rename StopHop → PantryRun (2026-07-28, commit 9ecd66f)
+- Owner requested full rename "everywhere". Case-aware replace across 39 tracked files incl. applicationId/namespace `com.shiftlogichq.pantryrun`, Kotlin package dir (git mv), iOS app group + AASA appID, `PANTRYRUN_UPLOAD_*` signing props, siri APP_GROUP_ID, all UI strings and docs.
+- `GroceryApp/dist-android/` + tracked `index-*.hbc` deliberately untouched (stale build artifacts carrying the historical leaked token; never regenerate/re-commit build outputs).
+- After renaming applicationId, Gradle kept failing on a **stale autolinking cache** (`android/build/generated/autolinking/autolinking.json` + generated `ReactNativeApplicationEntryPoint.java` still said stophop); `:app:clean` does NOT clear it — delete both `generated/autolinking` dirs. assembleDebug then produced an APK with the new id.
+- **Owner implications:** new applicationId = new app to Android/Play (no in-place upgrade from com.shiftlogichq.stophop; id permanent on first Play upload); assetlinks.json/AASA must be re-deployed; punch-list C6 evidence now points to `com.shiftlogichq.pantryrun`.
+
 ## Step-1 investigations (ground truth before fixes)
 
 ### Google Assistant webhook (RESOLVED — investigated 2026-07-03)
