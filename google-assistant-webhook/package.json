@@ -1,0 +1,10 @@
+{
+  "name": "groceryapp-google-assistant-webhook",
+  "version": "1.0.0",
+  "description": "Google Assistant fulfillment webhook for GroceryApp (Zero-Knowledge E2EE)",
+  "main": "index.js",
+  "dependencies": {
+    "libsodium-wrappers": "^0.8.4",
+    "yjs": "^13.6.31"
+  }
+}

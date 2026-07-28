@@ -1,0 +1,63 @@
+# GroceryApp Self-Host Stack
+# docker compose up -d          # Start relay + optional price adapter
+# docker compose down           # Stop everything
+# docker compose build --pull   # Rebuild with fresh base images
+
+services:
+  # ──────────────────────────────────────────────
+  # WebSocket Relay — Zero-knowledge Yjs sync
+  # ──────────────────────────────────────────────
+  relay:
+    build:
+      context: ./relay-server
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    image: groceryapp-relay:latest
+    container_name: groceryapp-relay
+    restart: unless-stopped
+    ports:
+      - "8080:8080"    # WebSocket sync (auth via WS message) + REST (health, enroll, stats, token issuer)
+      - "8081:8081"    # Anonymous pool API (identity-free contributions; see POOL_PORT)
+    environment:
+      - NODE_ENV=production
+      - RELAY_PORT=8080
+      - RATE_LIMIT_MESSAGES=100
+      - MAX_CLIENTS_PER_FAMILY=50
+      - MAX_FAMILIES=100
+      - MAX_DEVICES_PER_FAMILY=20
+      # Pool isolation: serve the anonymous contribution pool on its own port
+      # so it can be published under a SEPARATE ORIGIN (e.g. pool.example.com)
+      # from the authenticated relay/token-issuer (relay.example.com).
+      # See relay-server/POOL-ISOLATION.md. Set POOL_PORT=8080 to serve both
+      # on one origin (NOT recommended for a public community pool).
+      - POOL_PORT=8081
+      # Flyer AI extraction backend (POST /api/extract/flyer).
+      # Self-host (free): point OLLAMA_URL at an Ollama instance running a
+      # vision model (default model: qwen2.5-vl:7b).
+      # Managed (paid): set QWEN_API_KEY for DashScope qwen-vl-max instead.
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434/api/generate}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # The relay is zero-knowledge (stores only client-side-encrypted ciphertext)
+    # but NOT stateless: it persists enrollment state (relay-state.json), Yjs doc
+    # state (relay-docs.json), and encrypted updates (data/encrypted-updates.json)
+    # inside the container. Encrypted updates are aged out after UPDATE_TTL_MS
+    # (default 30 days). Mount a volume if you want that state to survive
+    # container rebuilds; omit it for wipe-on-rebuild behavior.
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "256M"
+
+networks:
+  default:
+    name: groceryapp-network
+    driver: bridge

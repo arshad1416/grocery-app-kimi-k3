@@ -1,0 +1,82 @@
+diff --git a/node_modules/react-native-libsodium/android/CMakeLists.txt b/node_modules/react-native-libsodium/android/CMakeLists.txt
+index aea3c38..d3d90c2 100644
+--- a/node_modules/react-native-libsodium/android/CMakeLists.txt
++++ b/node_modules/react-native-libsodium/android/CMakeLists.txt
+@@ -31,9 +31,12 @@ set_target_properties( sodium PROPERTIES IMPORTED_LOCATION ${LIBSODIUM_BUILD_DIR
+ 
+ # here we define a library target called "libsodium"
+ # which will be built from the listed source files
++# NOTE: jsi.cpp is deliberately EXCLUDED. On RN 0.85+ with New Architecture,
++# Hermes already provides JSI symbols. Compiling a second copy into
++# liblibsodium.so causes vtable/symbol conflicts that SIGSEGV at runtime.
++# Instead, we link against ReactAndroid::jsi (prefab) for the symbols.
+ add_library(libsodium
+   SHARED
+-  "${NODE_MODULES_DIR}/react-native/ReactCommon/jsi/jsi/jsi.cpp"
+   ../cpp/react-native-libsodium.cpp
+   ../cpp/react-native-libsodium.h
+   cpp-adapter.cpp
+@@ -42,5 +45,21 @@ add_library(libsodium
+ # Enable Android 16kb native library alignment
+ target_link_options(libsodium PRIVATE "-Wl,-z,max-page-size=16384")
+ 
++# Find ReactAndroid and fbjni prefab packages
++find_package(ReactAndroid REQUIRED CONFIG)
++find_package(fbjni REQUIRED CONFIG)
++
++# Include directories for headers
++target_include_directories(libsodium PRIVATE
++  "${NODE_MODULES_DIR}/react-native/ReactCommon"
++)
++
+ # link the sodium lib with our "libsodium" library target defined earlier
+-target_link_libraries(libsodium sodium)
++target_link_libraries(libsodium
++  ReactAndroid::jsi
++  ReactAndroid::reactnative
++  fbjni::fbjni
++  android
++  log
++  sodium
++)
+diff --git a/node_modules/react-native-libsodium/android/build.gradle b/node_modules/react-native-libsodium/android/build.gradle
+index 49282df..9094488 100644
+--- a/node_modules/react-native-libsodium/android/build.gradle
++++ b/node_modules/react-native-libsodium/android/build.gradle
+@@ -1,16 +1,5 @@
+ import java.nio.file.Paths
+ 
+-buildscript {
+-  repositories {
+-    google()
+-    mavenCentral()
+-  }
+-
+-  dependencies {
+-    classpath "com.android.tools.build:gradle:7.2.1"
+-  }
+-}
+-
+ def isNewArchitectureEnabled() {
+   return rootProject.hasProperty("newArchEnabled") && rootProject.getProperty("newArchEnabled") == "true"
+ }
+@@ -81,7 +70,7 @@ android {
+     }
+   }
+ 
+-  lintOptions {
++  lint {
+     disable "GradleCompatible"
+   }
+ 
+@@ -90,6 +79,10 @@ android {
+     targetCompatibility JavaVersion.VERSION_1_8
+   }
+ 
++  buildFeatures {
++    prefab true
++  }
++
+ }
+ 
+ repositories {

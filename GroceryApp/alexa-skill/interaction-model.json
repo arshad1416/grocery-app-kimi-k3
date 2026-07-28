@@ -1,0 +1,97 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "grocery app",
+      "modelConfiguration": {
+        "fallbackIntentSensitivity": {
+          "level": "LOW"
+        }
+      },
+      "intents": [
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AddItemIntent",
+          "slots": [
+            {
+              "name": "ItemName",
+              "type": "AMAZON.Food"
+            },
+            {
+              "name": "Quantity",
+              "type": "AMAZON.NUMBER"
+            },
+            {
+              "name": "Unit",
+              "type": "AMAZON.Unit"
+            }
+          ],
+          "samples": [
+            "add {ItemName}",
+            "add {ItemName} to my grocery list",
+            "add {Quantity} {ItemName}",
+            "add {Quantity} {Unit} of {ItemName}",
+            "put {ItemName} on the list",
+            "put {ItemName} on my grocery list",
+            "I need {ItemName}",
+            "I need to get {ItemName}",
+            "remind me to get {ItemName}",
+            "add {Quantity} {Unit} of {ItemName} to my list",
+            "add a dozen {ItemName}",
+            "add {Quantity} {ItemName} please"
+          ]
+        },
+        {
+          "name": "GetListIntent",
+          "slots": [
+            {
+              "name": "ListName",
+              "type": "AMAZON.List"
+            }
+          ],
+          "samples": [
+            "what is on my grocery list",
+            "read my grocery list",
+            "what do I need to buy",
+            "what is on my list",
+            "show me my grocery list",
+            "tell me my grocery list",
+            "what items are on my list",
+            "read my list",
+            "what's on my {ListName}"
+          ]
+        },
+        {
+          "name": "CheckOffIntent",
+          "slots": [
+            {
+              "name": "ItemName",
+              "type": "AMAZON.Food"
+            }
+          ],
+          "samples": [
+            "mark {ItemName} as done",
+            "check off {ItemName}",
+            "remove {ItemName} from my list",
+            "I got {ItemName}",
+            "I bought {ItemName}",
+            "mark {ItemName} as complete",
+            "done with {ItemName}",
+            "{ItemName} is done"
+          ]
+        }
+      ],
+      "types": []
+    }
+  }
+}

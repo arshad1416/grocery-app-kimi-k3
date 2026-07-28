@@ -1,0 +1,16 @@
+diff --git a/node_modules/react-native/index.js b/node_modules/react-native/index.js
+index b50fbad..be3cad0 100644
+--- a/node_modules/react-native/index.js
++++ b/node_modules/react-native/index.js
+@@ -367,6 +367,11 @@ module.exports = {
+       .VirtualViewMode;
+   },
+   // #endregion
++  // Polyfill for removed ViewPropTypes — needed by older native modules
++  // (e.g. expo-secure-store's NativeViewManagerAdapter)
++  get ViewPropTypes() {
++    return require('deprecated-react-native-prop-types').ViewPropTypes;
++  },
+ } as ReactNativePublicAPI;
+ 
+ if (__DEV__) {

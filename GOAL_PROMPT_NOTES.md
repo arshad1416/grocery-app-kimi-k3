@@ -1,0 +1,127 @@
+# GOAL_PROMPT_NOTES — GroceryApp hardening & store-readiness pass
+
+Running log of findings, decisions, and deferrals. One entry per lesson/decision; update in place rather than duplicating.
+
+## Step-1 investigations (ground truth before fixes)
+
+### Google Assistant webhook (RESOLVED — investigated 2026-07-03)
+- **Finding:** `google-assistant-webhook/index.js` is **undeployed dead code** — no deployment config, no client code path, no URL referenced anywhere in the app, not exercised by tests. But architecturally it decrypts the family master key **server-side** (`decryptFamilyKey()` at index.js:22-36, used at :400) and reads plaintext list items into memory (:172-177, :295-317).
+- `GroceryApp/alexa-skill/index.js` has the **same server-side decryption flaw** (also undeployed). Siri path (`src/voice/siri.ts`) is on-device only and preserves zero-knowledge.
+- The relay itself exposes `/api/assistant/list-data` returning `encryptedMasterKey` (relay-server/server.js ~:915) — that endpoint is the enabler and IS part of the deployable relay.
+- `ARCHITECTURE-VOICE-ASSISTANTS.md` acknowledges the trade-off; PrivacyScreen.tsx:189 ("relay can't read it") does not.
+- **CORRECTION to agent finding (verified directly):** there IS a client path — SettingsScreen's "Voice Assistant Link" section (6-digit pairing code → `POST /api/oauth/pair`) fetches the assistant RSA-4096 public key from the relay, encrypts the family master key with it, and uploads. **The relay generates that RSA keypair itself and holds the private key** (server.js `ensureAssistantKeys`). So the relay operator can decrypt any voice-linked family's master key — a direct zero-knowledge break, worse than the webhook issue.
+- **Decision (implemented 2026-07-03):** ship v1 with cloud voice-assistant linking DISABLED by default, feature preserved behind explicit opt-in:
+  - Relay: `ASSISTANT_INTEGRATION=true` env required; otherwise all `/api/assistant/*`, `/oauth/*`, `/api/oauth/*` return 404 and no assistant keypair is ever generated. Pinned by new `relay-server/assistant-disabled.test.js` (7 endpoints + health).
+  - Client: `VOICE_ASSISTANT_LINKING_ENABLED = false` const hides the Settings section (SettingsScreen.tsx).
+  - Siri unaffected (fully on-device). server.test.js voice suite now sets the env flag (it tests the opt-in feature).
+  - Rationale: README/privacy labels claim E2EE-relay-can't-read; can't ship a UI flow that hands the relay the master key. Reversible in one flag each side if the owner decides otherwise (would then REQUIRE privacy-label changes + in-app disclosure).
+
+### Token scheme (RESOLVED — investigated 2026-07-03)
+- **Finding:** **RFC 9474 Blind RSA (RSABSSA-SHA384-PSS-Randomized) live end-to-end.** Client (`src/pricing/tokens.ts:209,216,248`, `@cloudflare/blindrsa-ts`, hardcoded v2), issuer (`relay-server/server.js:1426` blindSign, private key via env/file), pool (`pool/pool-server.js:273` verify, public-key-only, **fail-closed** without `ISSUER_PUBLIC_KEY`, replay protection via used-tokens-store 24h TTL). No HMAC path, no feature flag, no shared secret between issuer and pool. E2E test exercises real blind RSA (`tokens/__tests__/e2e-contribution.test.js`).
+- BLIND-TOKEN-IMPLEMENTATION-PLAN.md describes an already-completed migration — doc is behind the code, not ahead of it.
+- `GroceryApp/relay-server/` is a stale near-empty copy; root `relay-server/` is authoritative (docker-compose builds `./relay-server`).
+- **Decision:** no code change needed for the scheme itself. Remaining work is deployment isolation (issuer vs pool on separate origins) — see task 4.
+
+### Relay persistence vs ephemeral claim (RESOLVED — investigated 2026-07-03)
+- **Finding:** Relay is **NOT ephemeral**. Three disk-persistence paths, all surviving restarts:
+  1. `doc-store.js:33-47` writes Yjs state to `relay-docs.json` on every update.
+  2. `encrypted-store.js:23-28,42-59` appends encrypted updates to `data/encrypted-updates.json` with **no TTL — grows forever**.
+  3. `server.js:300-310` persists enrollments/OAuth tokens to `relay-state.json` (enrollment tokens have 30-day sliding TTL; updates have none).
+- Everything persisted is ciphertext (`{ciphertext, iv, tag}`, XChaCha20-Poly1305 client-side) — "relay can't read it" (PrivacyScreen.tsx:189) is TRUE. But docker-compose.yml:35 claims "relay is stateless" — FALSE.
+- **Decision:** keep zero-knowledge claim, fix the "stateless/ephemeral" claims, and add a retention TTL + cleanup for encrypted updates (privacy hardening, small change). Documented persistence ≠ broken crypto.
+
+### FamilyMember.role enforcement (RESOLVED — investigated 2026-07-03)
+- **Finding:** **Decorative.** `role: 'admin'|'editor'|'viewer'` defined at src/types/index.ts:83; zero checks in UI, relay, or tests. In a shared-key E2EE CRDT app, real enforcement is architecturally impossible without breaking zero-knowledge.
+- **Decision:** drop/hide the field for v1 (per goal: "drop the field until it's built") rather than fake enforcement — keep data model minimal, avoid implying access control that doesn't exist.
+
+### 30-min claim auto-release (RESOLVED — investigated 2026-07-03)
+- **Finding:** **Partially implemented.** `CLAIM_EXPIRY_MS` at yjs-adapter.ts:314; expiry is checked when another device re-claims (yjs-adapter.ts:336-338) and shown in UI (ItemRow.tsx:56-58, 60s re-render tick in GroceryListScreen.tsx:189-194). But nothing ever *releases* the claim — no sweep calls unclaim on expiry. Type comment at types/index.ts:50 says "Auto-released after 30min" — overstated.
+- **Decision:** functional behavior is actually correct-by-design for a CRDT (expired claims are claimable by others and greyed in UI); add a lightweight expiry sweep on the existing 60s tick to actually clear stale claims, and fix the comment. Small, contained change.
+
+## Baseline (2026-07-03, fresh worktree)
+- Worktree had no node_modules; ran npm install for GroceryApp + relay-server.
+- **GroceryApp Jest: 35/35 suites PASS (452 passed, 1 skipped).** Green before any changes.
+- **relay-server Jest: 2/3 suites pass; token-issuer.test.js 9 failures — single root cause:** tests read `relay-server/keys/issuer-private-key.pem` which doesn't exist in a fresh checkout (keys are generated, not committed). Fix: generate dev key via `tokens/blind-rsa-keygen.js` (and make test setup self-sufficient or document the step).
+
+## Fixes applied (with verification evidence)
+- **Relay test baseline fixed:** added `jest.global-setup.js` that runs the idempotent `blind-rsa-keygen.js`; relay suite went 9-failed → all green. CI now runs `npm test` for relay-server (was only `node --check`).
+- **Claim auto-release implemented:** `yjsSweepExpiredClaims()` in yjs-adapter.ts, called from GroceryListScreen's existing 60s tick; misleading "auto-released" type comment corrected; new test in claim-item.test.ts (9/9 pass).
+- **Role field dropped for v1:** removed from FamilyMember type, model mapping, hydrate; DB column kept (commented legacy) to avoid a schema migration.
+- **Relay retention:** `addUpdate` stamps `storedAt`; hourly cleanup ages out encrypted updates after `UPDATE_TTL_MS` (default 30d); docker-compose "stateless" comment corrected; threat-model.md documents persistence + flyer-channel caveat.
+- **Pre-existing tsc errors fixed** (siri.ts, 3 errors from the voice-assistants commit) — CI's `tsc --noEmit` would have failed.
+
+## Fresh-context verification round (2026-07-03/04) — findings and fixes
+Independent verifier confirmed all suites green + live relay behavior, and found 3 real bugs (all fixed):
+1. **Mangled .gitignore append** (`window_dump.xmlnode_modules_bak/` — original file lacked trailing newline) → fixed; `git check-ignore` verified both patterns work.
+2. **Relay tests polluted tracked state**: tests set `STATE_FILE` but server reads `RELAY_STATE_FILE` — every test/CI run wrote enrollment junk into tracked `relay-state.json`. Fixed env var in both test files; untracked + gitignored `relay-state.json`/`used-tokens.json`/`test-relay-state*.json`/`data/`; verified state file stays clean after `npm test`.
+3. **Flyer scan visible without pricing opt-in** → scans would silently surface nothing (AC-14 gate). Camera button now requires `flyerScanEnabled && pricingOptedIn`.
+
+### LAUNCH-BLOCKING discovery from the same round (fixed 2026-07-04)
+- **`syncManager.init()` / `hydrateFromDB()` were never called from any runtime code.** Comments everywhere said "hydrated from WatermelonDB on app start" but no code did it: lists lived only in in-memory Yjs docs (gone on every app restart) and the relay WebSocket never connected outside tests. The entire sync/persistence stack was built and tested but unplugged.
+- **Fix:** new `src/sync/bootstrap.ts` (`bootstrapSync()`: master key → `hydrateFromDB` → relay `init` when enrolled, wired to useSyncStore/useGroceryStore callbacks), called from App.tsx init. `hydrateFromDB` now also stores the encryption key (local persistence works without relay), rebuilds the `__lists_index__` doc that `useListStore.loadLists` reads, and registers hydrated lists for observation. Regression-tested by `__tests__/sync-bootstrap.test.ts` (restart-survival simulation). NOTE: needs one real-device smoke test (create list → kill app → relaunch) before submission — mock-DB tests can't prove the native SQLite path.
+- **Hardcoded Turso read-write JWT removed from App.tsx** (was committed in git history — **rotate that token**; treat the DB as exposed). Now reads `settings.tursoUrl/Token` or `EXPO_PUBLIC_TURSO_URL/TOKEN` build env.
+- **Flaky ac1 test fixed**: `signature.replace(/A/g,'B')` tamper was a no-op ~20% of the time (no 'A' in random base64); now flips the first char deterministically.
+- watermelondb mock now mirrors `_raw.id` ↔ `record.id` like the real library (the missing mirror hid the hydration path from tests).
+
+## Voice-assistant key-custody fix (2026-07-06, owner asked to "fix the encryption issue")
+- **Ground truth re-verified before changing anything:** the relay's `assistantPrivateKeyPem` was generated and stored but NEVER used — no `privateDecrypt` anywhere in the relay; only the webhook (`process.env.ASSISTANT_PRIVATE_KEY`) decrypts. So relay private-key custody was pure liability with zero function. Also confirmed: no key hierarchy exists (master key used directly as sync key, bootstrap.ts `encryptionKey: masterKey`), so "upload a derived subkey" = re-keying the core sync channel → deferred to the monetization work, documented in MONETIZATION.md §2.
+- **Fix (surgical):** relay now loads only the PUBLIC key (`getAssistantPublicKey`: env `ASSISTANT_PUBLIC_KEY` or pem path), never generates a keypair, fails closed (503) if unprovisioned. New out-of-band `assistant-keygen.js` writes the private half as `*.WEBHOOK-ONLY.pem` (0600) with custody instructions. `ensureAssistantKeys` (incl. its vestigial call in /oauth/authorize) removed.
+- **Pinned by `assistant-key-custody.test.js`:** 503 without provisioned key, no private key written on boot, provisioned pubkey served without private material. server.test.js provisions a throwaway pubkey via env. Relay suite 5/5 (36 tests).
+- **Residual, disclosed not fixed (inherent):** the deployed webhook transiently decrypts list content to answer voice requests — no cloud assistant can be zero-knowledge. Feature stays disabled in v1; re-enable checklist in MONETIZATION.md (webhook deploy + disclosure + labels + ideally derived subkey).
+
+## Monetization decision (owner, 2026-07-06)
+- **v1 ships fully free, self-hosted-only.** Managed tier + subscription-key UI hidden behind `MANAGED_TIER_ENABLED = false` (SettingsScreen); users with stored `hostingTier: 'managed'` are coerced to the self-hosted experience in the UI. Rationale: no in-app purchase path exists → un-buyable "subscription key" field is an Apple 3.1.1 rejection magnet. Key finding that motivated this: `managedSubscriptionKey` was write-only — stored but never validated or checked anywhere; the tier switch only toggled Settings-section visibility. Nothing was ever actually payment-gated.
+- **Post-v1 plan (owner):** subscription unlocks Trip Optimizer + Smart Home integration. Captured in docs/MONETIZATION.md with hard prerequisites: real IAP (native dep, needs EAS build), single entitlement module, receipt validation; **Smart Home has a security precondition** — it's the feature disabled in v1 because linking hands the relay a decryptable master key; must be redesigned (or explicitly disclosed + labels updated) before it can be sold. Also noted: public repo means client-side gates are bypassable; grandfathering Trip Optimizer users to avoid "feature removal" reviews.
+
+## Launch-gap closing pass (2026-07-04) — scoping agent + fixes
+Fixed (repo-side, all tested/typechecked green at 465 passing):
+- **Dead list "Share"**: HomeScreen emitted `grocceryapp://` + `{listId,familyId}` blob the join flow couldn't parse → now uses new `src/identity/invite-link.ts` (single source of truth: `{pairingCode, invite}` + self-enroll), shared with Settings' Generate QR.
+- **Invite deep link routed nowhere**: `invite` path mapped to an unregistered `Invite` screen → made it a RN v7 `alias` of the Pairing screen (verified `alias` is real in @react-navigation/core 7.2.5 types); dropped dead route.
+- **iOS Universal Links couldn't verify**: added `ios.associatedDomains: applinks:groceryapp.app` to app.json; fixed AASA `paths` (`/invite/*` → `/invite`, `/invite/*`) so `/invite?token=` matches.
+- **Android App Links**: added `android/assetlinks.json` deploy template + docs/DEEP-LINK-HOSTING.md; split the `autoVerify` intent filter so the custom scheme isn't under autoVerify (only http/https are).
+- **Notification taps did nothing**: `useNotificationNavigation` was defined but never mounted → rewrote as `registerNotificationNavigation(ref)`, mounted from NavigationContainer `onReady`.
+- **Accessibility**: labeled the highest-traffic icon-only buttons (header nav, back, FAB, flyer scan). Full a11y sweep across ~291 touchables deferred as polish (not a store gate for v1).
+Deferred with reason:
+- **iOS native splash**: SDK 56 needs the `expo-splash-screen` config plugin (not installed); the core `expo.splash` key is web/PWA-only per @expo/config-types. Adding a native dep needs a real prebuild/EAS build to validate — can't verify here. Android splash already configured. → owner adds during first EAS build.
+- **Onboarding**: first run lands on an empty Home with visible "Create list" + pair (people icon) affordances — usable, no guided flow. Optional.
+- Mic/Speech iOS purpose strings: justified by the Siri entitlement (in-app "voice" is a text modal, no mic API); left as-is.
+
+## Second verification round → family join flow completed (2026-07-04)
+- Verifier #2 confirmed the hydration fix but proved **relay enrollment had no runtime callers**: PairingScreen only saved the relay URL; `enrollWithRelay` was never invoked; no relayToken ever existed; `bootstrapSync` could only ever be 'local-only'. Family sync — the app's headline feature — could not authenticate, ever.
+- **Fixed (commit dd28a6d3):** pairing QR now carries `{pairingCode, invite}`; PairingScreen `completeJoin()` does verify → connect → enroll → accept membership → recovery-phrase step for the shared key; inviter self-enrolls with a separate single-use invite and reuses its familyId (new optional param — previously every invite founded a NEW family, so members could never actually join each other).
+- **Additional real bugs fixed in the same path:** forgeable pairing-code signatures (signing keypair was derived from the PUBLIC deviceId — anyone could forge; now signed with the device secret, self-certifying signerKey, regression-tested); `grocceryapp://` scheme typo made all shared invite links dead (OS registered `groceryapp://` only); scanner didn't URL-decode tokens so even scanned QRs failed JSON.parse.
+- **Live verification:** booted the relay and drove the exact client invite construction against `/enroll`: 200 + relayToken, replay → 403, tamper → 403. Client/server serialization byte-compatible.
+- **Key-distribution design note:** the sealed-key (crypto_box_seal) handoff has NO relay transport endpoint — not built on either side. v1 join uses the existing recovery-phrase entry as the out-of-band family-key channel (matches the in-person QR trust model). Sealed-key-over-relay deferred to v1.1 with the fingerprint-verification work.
+- Deferred (documented): a REAL two-device smoke test on hardware before submission — mock-DB/Node tests can't prove the native SQLite + RN runtime path.
+
+## Third verification round (join-flow commit, 2026-07-04) — 2 bugs found, both fixed
+1. **QR died after 5 minutes while promising 7 days**: `PAIRING_CODE_MAX_AGE_MS` was 5 min, checked before the invite half was ever reached; the persisted, re-displayed QR was always expired. Fixed → 7 days to match the invite (one-time-use + expiry of the join itself stay server-enforced on the invite).
+2. **Double-port URL poisoning**: `${settings.relayUrl}:${settings.relayPort}` in the Generate-QR handler, but relayUrl saved from a scanned code already contains the port → `ws://host:8080:8080` → silent self-enroll failure + broken chained invites. Fixed with a port-aware guard (same class of bug fixed earlier in bootstrap.ts — lesson: never concatenate ports onto relayUrl anywhere; three sites now use guards).
+- UX hardening from the same review: self-enroll failure now surfaces in the Generate-QR alert (was console-only — inviter would silently never sync); joined-with-existing-key alert explains the wrong-key recovery path.
+- Verifier confirmed good: invitee recovery works on fresh devices and derives the identical family key (pure function of phrase); no remaining public-key-derived signing anywhere; client invite JSON verified byte-compatible with relay /enroll.
+- Known non-blocking edge cases (accepted for v1, documented here): one-time invite is burned if SecureStore fails between enroll and membership write (regenerate); replay error shows raw relay JSON; inviter must have generated a recovery phrase before the invitee needs it (guaranteed whenever the inviter has a key, since phrase+key are created together).
+
+## Additional ground truth (verified directly, resolving agent disagreement)
+- **Extract endpoint IS mounted** in relay-server/server.js:712 (`POST /api/extract/flyer` → extract/extract-server.js). One earlier agent report claiming it wasn't mounted was wrong.
+- **Pool separation-by-port already exists in code**: server.js:991-1535 — if `POOL_PORT !== RELAY_PORT`, a separate HTTP server serves `/api/pool/*`. What's missing is deployment config (docker-compose has one service, no POOL_PORT) and true separate-origin deployment.
+- **RelayExtractor (src/pricing/relay-extractor.ts) is real, not a mock** — posts base64 image to relay `/api/extract/flyer` with Bearer relayToken, 30s timeout, never throws. File carries an explicit privacy notice: flyer images are NOT zero-knowledge (relay sees plaintext image over TLS). Remaining question: is any UI/runtime path actually calling `processFlyerImage(image, relayExtractor)`? (checking flyer-scan.ts / registry / screens next).
+
+## Crypto self-review verdict (task 8, 2026-07-03)
+Would sign off for v1 family data, with the following judgments:
+- **Sound:** XChaCha20-Poly1305 w/ fresh 24B nonces + per-field AAD; Argon2id13 MODERATE (right tier for ~1s mobile KDF); crypto_box_seal family-key handoff; Ed25519-signed one-time invites w/ server-side replay set; blind-RSA token flow (audited Cloudflare lib, fail-closed pool); keys only in SecureStore; constant-time compares; NFKC normalization.
+- **Fixed this pass:** passkeys.ts Math.random fallback → now throws without CSPRNG; pricingOptedIn gate enforced (was doc-only); voice-assistant master-key upload disabled (biggest real flaw — see above).
+- **Documented, deferred with reason (added to threat-model.md Known Gaps):** active-malicious relay can MITM enrollment (mitigated by in-person QR; full fix = fingerprint UI or MLS, v2); no envelope versioning (must precede any algo migration); Ed25519 seed derived from Curve25519 secret (works, hygiene note); no forward secrecy / key rotation (pre-existing documented gap, docs/key-rotation-known-issue.md).
+- Added SECURITY.md (responsible disclosure + reviewer map) per CLOSING-REMAINING-GAPS recommendation. Paid audit: correctly deferred to v1.1 per that doc; nothing found that makes shipping v1 unsafe for its stated threat model.
+
+## Store-compliance pass (task 7, 2026-07-03)
+- Fixed: ITSAppUsesNonExemptEncryption=true + STORE_COMPLIANCE.md §0 (export answers, BIS 5D992.c self-classification); android versionCode 30/versionName 1.30.0 sync; release signing via STOPHOP_UPLOAD_* props; AASA bundle-id corrected; Leave Family + extended Clear Local Prices flows; privacy labels + PrivacyScreen + privacy/index.html now disclose flyer photos (ephemeral User Content), relay 30-day retention; camera usage strings cover QR/flyer; removed node_modules_bak (20k tracked files) + .bak2 strays.
+- **Needs the owner (cannot be done from the repo):** Apple Team ID in AASA + deploy to groceryapp.app/.well-known/; generate + back up upload keystore (or `eas credentials`); host privacy policy at groceryapp.app/privacy; fill the console forms using §§0-2; annual BIS email. Store accounts/fees are the user's call.
+
+## Crypto survey highlights (full detail in review task)
+- XChaCha20-Poly1305 AEAD w/ per-field AAD context strings; fresh 24B random nonce per encryption; Argon2id13 MODERATE (ops=3, mem=256MB) for passphrase KDF; recovery = 16B seed → generichash (BIP39 12 words); crypto_box_seal for family-key handoff; Ed25519 (derived from device Curve25519 seed) signs invites; keys in expo-secure-store only.
+- Flags to judge in review: passkeys.ts stub falls back to Math.random (stub feature — candidate to remove from v1); Math.random for reconnect jitter (benign); no envelope versioning; no key rotation / forward secrecy (documented known gap); AAD context strings are untyped.
+
+## Store compliance survey highlights (task 7)
+- Blockers found: (1) android versionCode 29 / versionName 1.29.0 vs app.json 1.30.0 mismatch; (2) release build signs with DEBUG keystore (build.gradle:115); (3) `ITSAppUsesNonExemptEncryption` missing from app.json ios.infoPlist; (4) ios/apple-app-site-association has placeholder `TEAMID.com.groceryapp.app` (also wrong bundle id — should be com.shiftlogichq.stophop) — real Team ID must come from the user.
+- Rejection risks: missing "Clear Local Prices" UI that PrivacyScreen references; no Leave Family/unpair flow; verify targetSdk ≥ 34 via Expo 56.
+- Good: permission strings present, privacy manifest present, adaptive icons present, privacy policy html exists, Sentry opt-out + sendDefaultPii:false, endpoints list documented in STORE_COMPLIANCE.md.

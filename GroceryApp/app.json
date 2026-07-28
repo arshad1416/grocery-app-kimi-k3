@@ -1,0 +1,131 @@
+{
+  "expo": {
+    "owner": "shiftlogichq",
+    "name": "StopHop",
+    "slug": "GroceryApp",
+    "version": "1.30.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "groceryapp",
+    "plugins": [
+      "sentry-expo",
+      [
+        "react-native-libsodium",
+        {}
+      ],
+      "./plugins/withLibcxxPickFirst.js",
+      [
+        "expo-notifications",
+        {
+          "color": "#10B981",
+          "defaultChannel": "stophop-family"
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "associatedDomains": [
+        "applinks:groceryapp.app"
+      ],
+      "entitlements": {
+        "com.apple.security.application-groups": [
+          "group.com.shiftlogichq.stophop"
+        ],
+        "com.apple.developer.siri": true
+      },
+      "infoPlist": {
+        "NSCameraUsageDescription": "Scan barcodes to add items to your grocery list, scan QR codes to join your family, and photograph store flyers for price extraction",
+        "NSPhotoLibraryUsageDescription": "Select a store flyer photo from your library so StopHop can read its prices",
+        "NSMicrophoneUsageDescription": "Add items to your grocery list using voice commands",
+        "NSSpeechRecognitionUsageDescription": "Convert voice commands to grocery list items",
+        "ITSAppUsesNonExemptEncryption": true
+      },
+      "privacyManifests": {
+        "NSPrivacyTracking": false,
+        "NSPrivacyTrackingDomains": [],
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "C617.1"
+            ]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "CA92.1"
+            ]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategorySystemBootTime",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "35F9.1"
+            ]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryDiskSpace",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "E174.1"
+            ]
+          }
+        ],
+        "NSPrivacyCollectedDataTypes": []
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": ["POST_NOTIFICATIONS"],
+      "_usesCleartextTrafficNote": "Required for self-hosted relay WebSocket connections on local network (ws:// scheme without TLS)",
+      "usesCleartextTraffic": true,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "groceryapp.app",
+              "pathPrefix": "/invite"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        },
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "groceryapp",
+              "host": "invite"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
+      "package": "com.shiftlogichq.stophop",
+      "packagingOptions": {
+        "pickFirst": ["**/libc++_shared.so"]
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "65df9ed1-7d5e-4145-937f-7f27b405d669"
+      }
+    }
+  }
+}

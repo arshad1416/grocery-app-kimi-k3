@@ -1,0 +1,104 @@
+# GroceryApp CI/CD
+# Runs on every PR to main and every push to main.
+# Ensures: TypeScript compiles, tests pass, docker builds, relay server linted.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Mobile App (Expo/React Native) ────────────────────────────────────────
+  mobile:
+    name: Mobile App
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: GroceryApp
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: GroceryApp/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Run unit tests
+        run: npx jest --ci --coverage --maxWorkers=2
+
+      - name: Check bundle size
+        run: |
+          BUNDLE_SIZE=$(du -sk node_modules/ 2>/dev/null | cut -f1)
+          echo "node_modules size: ${BUNDLE_SIZE}KB"
+          if [ "$BUNDLE_SIZE" -gt 200000 ]; then
+            echo "WARNING: node_modules exceeds 200MB — audit for bloat"
+          fi
+
+  # ─── Relay Server ──────────────────────────────────────────────────────────
+  relay:
+    name: Relay Server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay-server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: relay-server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (syntax check)
+        run: node --check server.js
+
+      - name: Run unit tests
+        run: npm test
+
+  # ─── Docker Build (multi-arch) ────────────────────────────────────────────
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (for ARM64 builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build relay image (amd64 only, PR)
+        uses: docker/build-push-action@v6
+        with:
+          context: relay-server
+          file: relay-server/Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: groceryapp-relay:ci
+
+      - name: Build full compose stack
+        run: docker compose build

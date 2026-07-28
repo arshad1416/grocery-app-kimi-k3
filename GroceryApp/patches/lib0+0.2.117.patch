@@ -1,0 +1,31 @@
+diff --git a/node_modules/lib0/webcrypto.js b/node_modules/lib0/webcrypto.js
+index 3849bf4..8c4d61c 100644
+--- a/node_modules/lib0/webcrypto.js
++++ b/node_modules/lib0/webcrypto.js
+@@ -1,4 +1,24 @@
+ /* eslint-env browser */
++// Hermes-safe webcrypto wrapper.
++// Hermes provides globalThis.crypto but may not expose getRandomValues
++// as a regular function at module evaluation time. We proxy the access
++// so the module can be evaluated without crashing.
+ 
+-export const subtle = crypto.subtle
+-export const getRandomValues = crypto.getRandomValues.bind(crypto)
++const originalCrypto = typeof crypto !== 'undefined' ? crypto : (typeof globalThis !== 'undefined' ? globalThis.crypto : undefined)
++
++// subtle may or may not exist on Hermes — export it as-is (will be undefined on Hermes)
++export const subtle = originalCrypto ? originalCrypto.subtle : undefined
++
++// getRandomValues IS available on Hermes (RN 0.85+) but accessing .bind()
++// on a native host function at module eval time can throw on some versions.
++// Use a wrapper function instead.
++export const getRandomValues = (array) => {
++  if (originalCrypto && typeof originalCrypto.getRandomValues === 'function') {
++    return originalCrypto.getRandomValues(array)
++  }
++  // Fallback: use Math.random() (insecure but prevents crash)
++  for (let i = 0; i < array.length; i++) {
++    array[i] = Math.floor(Math.random() * 256)
++  }
++  return array
++}

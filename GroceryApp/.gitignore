@@ -1,0 +1,18 @@
+node_modules/
+.expo/
+dist/
+android/app/src/main/assets/index.android.bundle
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+.DS_Store
+current_screen.png
+window_dump.xml
+node_modules_bak/
+
+# Local env — never commit real DSNs/tokens (a Turso token was once leaked this way)
+.env

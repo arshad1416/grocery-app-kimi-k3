@@ -1,0 +1,20 @@
+{
+  "name": "groceryapp-relay-server",
+  "version": "1.0.0",
+  "description": "Zero-knowledge WebSocket relay for GroceryApp Yjs sync",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "NODE_OPTIONS=--experimental-vm-modules npx jest --forceExit"
+  },
+  "dependencies": {
+    "@cloudflare/blindrsa-ts": "^0.4.4",
+    "tweetnacl": "^1.0.3",
+    "ws": "^8.18.1",
+    "yjs": "^13.6.31"
+  },
+  "devDependencies": {
+    "jest": "^30.4.2"
+  }
+}

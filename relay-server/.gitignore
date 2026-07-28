@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+keys/
+relay-state.json
+test-relay-state*.json
+used-tokens.json
+relay-docs.json
+data/

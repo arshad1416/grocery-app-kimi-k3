@@ -1,0 +1,14 @@
+node_modules
+node_modules_bak
+__tests__
+docs
+references
+scripts
+.git
+.gitignore
+*.md
+*.log
+.turso
+.env
+*.bak
+*.bak2

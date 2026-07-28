@@ -1,0 +1,331 @@
+/**
+ * DealMatcher — matches grocery list items against Flipp flyer deals
+ * using in-memory caching and keyword-based token intersection.
+ *
+ * Architecture per Qwen audit recommendation:
+ *   - Fetch all deals for user's FSA once (avoids slow LIKE '%term%' Turso queries)
+ *   - Cache in-memory for the session
+ *   - Search locally with token intersection matching
+ *   - Greedy set-cover algorithm for store optimization
+ */
+
+import { getTurso, isTursoReady } from './tursoClient';
+import { getCachedDeals, setCachedDeals } from './dealCache';
+import type { GroceryItem } from '../types';
+
+/** A deal row from the flipp_deals Turso table (internal type, also used by dealCache) */
+export interface FlippDealRow {
+  merchant: string;
+  name: string;
+  price: string;
+  price_real: number | null;
+  image_url: string | null;
+  valid_to: string;
+}
+
+export interface DealMatch {
+  merchant: string;
+  itemName: string;
+  price: string;
+  priceReal: number | null;
+  validTo: string;
+  imageUrl?: string;
+}
+
+export interface OptimizedStoreRun {
+  /** Stores sorted by number of matching items (descending) */
+  stores: {
+    merchant: string;
+    items: { listItemId: string; itemName: string; deal: DealMatch }[];
+    itemCount: number;
+    estimatedTotal: number;
+  }[];
+  /** Items that didn't match any deal */
+  unmatched: { listItemId: string; itemName: string }[];
+  totalStops: number;
+}
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+/** Words that add no matching value in grocery context */
+const STOP_WORDS = new Set([
+  'a', 'an', 'the', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for',
+  'with', 'without', 'fresh', 'frozen', 'organic', 'natural', 'premium',
+  'value', 'selected', 'choice', 'best', 'plus', 'all', 'each', 'per',
+  'pack', 'bag', 'box', 'bottle', 'can', 'jar', 'tub', 'tray', 'bunch',
+  'kg', 'g', 'ml', 'l', 'oz', 'lb', 'litre', 'liter', 'gram', 'grams',
+  'piece', 'pieces', 'count', 'size', 'large', 'medium', 'small',
+  'grade', 'type', 'style', 'brand', 'save', 'caisse', 'chaque',
+]);
+
+// ─── Keyword extraction ──────────────────────────────────────────────────────
+
+/** Extract meaningful keywords from a product name for matching */
+function extractKeywords(name: string): string[] {
+  if (!name || typeof name !== 'string') return [];
+
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')     // strip punctuation, keep hyphens
+    .split(/\s+/)
+    .filter((token) => token.length >= 2 && !STOP_WORDS.has(token));
+}
+
+/** Score how well query tokens match deal name tokens (0..1) */
+function matchScore(queryTokens: string[], dealTokens: string[]): number {
+  if (queryTokens.length === 0 || dealTokens.length === 0) return 0;
+
+  let hits = 0;
+  for (const qt of queryTokens) {
+    for (const dt of dealTokens) {
+      // Exact match or one is substring of the other
+      if (qt === dt || dt.includes(qt) || qt.includes(dt)) {
+        hits++;
+        break;
+      }
+    }
+  }
+
+  // Require at least 2 token matches for a meaningful match
+  if (hits < 2 && queryTokens.length > 1) return 0;
+
+  return hits / queryTokens.length;
+}
+
+// ─── Deal fetching (cached) ──────────────────────────────────────────────────
+
+
+/**
+ * Fetch all currently-valid deals for a given FSA.
+ * Results are cached in-memory for the session.
+ */
+export async function fetchDealsForFSA(
+  fsa: string,
+  forceRefresh = false,
+): Promise<FlippDealRow[]> {
+  if (!forceRefresh) {
+    const cached = getCachedDeals(fsa);
+    if (cached) return cached;
+  }
+
+  if (!isTursoReady()) return [];
+
+  try {
+    const db = getTurso();
+    // Use FSA prefix match (first 3 chars of postal code)
+    const prefix = fsa.slice(0, 3).toUpperCase();
+    const result = await db.execute(
+      `SELECT merchant, name, price, price_real, image_url, valid_to
+       FROM flipp_deals
+       WHERE postal_code LIKE ?
+         AND valid_to >= datetime('now')
+       ORDER BY merchant, price_real ASC`,
+      [prefix + '%'],
+    );
+
+    const deals: FlippDealRow[] = result.rows.map((row) => ({
+      merchant: String(row[0] ?? ''),
+      name: String(row[1] ?? ''),
+      price: String(row[2] ?? ''),
+      price_real: row[3] != null ? Number(row[3]) : null,
+      image_url: row[4] != null ? String(row[4]) : null,
+      valid_to: String(row[5] ?? ''),
+    }));
+
+    setCachedDeals(fsa, deals);
+    return deals;
+  } catch {
+    return [];
+  }
+}
+
+// ─── Deal matching ───────────────────────────────────────────────────────────
+
+/**
+ * Search deals for a single grocery item name within a set of deals.
+ * Returns matches sorted by confidence then price.
+ */
+function matchItemToDeals(
+  itemName: string,
+  deals: FlippDealRow[],
+  threshold = 0.35,
+): DealMatch[] {
+  const queryTokens = extractKeywords(itemName);
+  if (queryTokens.length === 0) return [];
+
+  const scored: { deal: FlippDealRow; score: number }[] = [];
+
+  for (const deal of deals) {
+    const dealTokens = extractKeywords(deal.name);
+    const score = matchScore(queryTokens, dealTokens);
+    if (score >= threshold) {
+      scored.push({ deal, score });
+    }
+  }
+
+  // Sort by score desc, then by price asc (cheapest first)
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return (a.deal.price_real ?? Infinity) - (b.deal.price_real ?? Infinity);
+  });
+
+  // Dedup by merchant (best match per store)
+  const seen = new Set<string>();
+  const results: DealMatch[] = [];
+  for (const { deal } of scored) {
+    if (!seen.has(deal.merchant)) {
+      seen.add(deal.merchant);
+      results.push({
+        merchant: deal.merchant,
+        itemName: deal.name,
+        price: deal.price,
+        priceReal: deal.price_real,
+        validTo: deal.valid_to,
+        imageUrl: deal.image_url ?? undefined,
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Match multiple grocery list items against deal data.
+ * Returns a map of item IDs to their deal matches.
+ */
+export function matchListItems(
+  items: { id: string; name: string }[],
+  deals: FlippDealRow[],
+): Map<string, DealMatch[]> {
+  const results = new Map<string, DealMatch[]>();
+  for (const item of items) {
+    results.set(item.id, matchItemToDeals(item.name, deals));
+  }
+  return results;
+}
+
+// ─── Store optimization ──────────────────────────────────────────────────────
+
+/**
+ * Greedy set-cover algorithm with tie-breaking by total cost.
+ *
+ * Given items and their matching stores, find the minimum set of stores
+ * that covers all items. When stores tie on coverage count, the one with
+ * the lower total cart cost wins.
+ */
+export async function optimizeStoreRun(
+  items: { id: string; name: string }[],
+  fsa: string,
+): Promise<OptimizedStoreRun> {
+  // Fetch deals (cached)
+  const deals = await fetchDealsForFSA(fsa);
+  if (deals.length === 0) {
+    return {
+      stores: [],
+      unmatched: items.map((i) => ({ listItemId: i.id, itemName: i.name })),
+      totalStops: 0,
+    };
+  }
+
+  // Match each item to its available deals
+  const itemMatches = matchListItems(items, deals);
+
+  // Build candidate set: which items can be bought at which store
+  // storeMerchant -> { itemId, itemName, DealMatch }[]
+  const storeCandidates = new Map<string, { itemId: string; itemName: string; deal: DealMatch }[]>();
+  const allUnmatched = new Set(items.map((i) => i.id));
+
+  for (const item of items) {
+    const matches = itemMatches.get(item.id) ?? [];
+    if (matches.length === 0) continue;
+
+    allUnmatched.delete(item.id);
+
+    for (const match of matches) {
+      if (!storeCandidates.has(match.merchant)) {
+        storeCandidates.set(match.merchant, []);
+      }
+      storeCandidates.get(match.merchant)!.push({
+        itemId: item.id,
+        itemName: item.name,
+        deal: match,
+      });
+    }
+  }
+
+  // Greedy set cover: repeatedly pick the store that covers the most uncovered items
+  interface StoreSelection {
+    merchant: string;
+    items: { itemId: string; itemName: string; deal: DealMatch }[];
+    itemCount: number;
+    estimatedTotal: number;
+  }
+  const selected: StoreSelection[] = [];
+  const covered = new Set<string>();
+  const remainingItemIds = new Set(
+    items.map((i) => i.id).filter((id) => !allUnmatched.has(id)),
+  );
+
+  while (remainingItemIds.size > 0) {
+    let bestStore: string | null = null;
+    let bestCoverage = 0;
+    let bestCost = Infinity;
+
+    for (const [merchant, candidates] of storeCandidates) {
+      const uncovered = candidates.filter((c) => !covered.has(c.itemId));
+      const count = uncovered.length;
+      if (count === 0) continue;
+
+      const totalCost = uncovered.reduce(
+        (sum, c) => sum + (c.deal.priceReal ?? 0),
+        0,
+      );
+
+      // Prefer store with more uncovered items; on tie, lower total cost wins
+      if (count > bestCoverage || (count === bestCoverage && totalCost < bestCost)) {
+        bestStore = merchant;
+        bestCoverage = count;
+        bestCost = totalCost;
+      }
+    }
+
+    if (!bestStore) break; // no more coverage possible
+
+    const storeItems = storeCandidates.get(bestStore)!;
+    const newlyCovered = storeItems.filter((c) => !covered.has(c.itemId));
+    for (const c of newlyCovered) {
+      covered.add(c.itemId);
+      remainingItemIds.delete(c.itemId);
+    }
+
+    selected.push({
+      merchant: bestStore,
+      items: newlyCovered,
+      itemCount: newlyCovered.length,
+      estimatedTotal: bestCost,
+    });
+  }
+
+  // Sort selected stores by item count descending
+  selected.sort((a, b) => b.itemCount - a.itemCount);
+
+  // Unmatched items
+  const unmatched = items
+    .filter((i) => allUnmatched.has(i.id) || !covered.has(i.id))
+    .map((i) => ({ listItemId: i.id, itemName: i.name }));
+
+  return {
+    stores: selected.map((s) => ({
+      merchant: s.merchant,
+      items: s.items.map((it) => ({
+        listItemId: it.itemId,
+        itemName: it.itemName,
+        deal: it.deal,
+      })),
+      itemCount: s.itemCount,
+      estimatedTotal: s.estimatedTotal,
+    })),
+    unmatched,
+    totalStops: selected.length,
+  };
+}

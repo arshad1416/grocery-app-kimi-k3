@@ -1,0 +1,12 @@
+{
+  "_comment": "Serve this file (minus this _comment key) at https://groceryapp.app/.well-known/apple-app-site-association with Content-Type application/json. Replace TEAMID with the 10-character Apple Developer Team ID before deploying — Universal Links will not verify until then. The appID suffix must match the iOS bundle identifier (com.shiftlogichq.stophop).",
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAMID.com.shiftlogichq.stophop",
+        "paths": ["/invite", "/invite/*"]
+      }
+    ]
+  }
+}

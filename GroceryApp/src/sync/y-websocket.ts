@@ -1,0 +1,550 @@
+/**
+ * WebSocket client for encrypted Yjs sync with the relay server.
+ *
+ * Connects to the zero-knowledge relay, sends/receives encrypted Yjs updates,
+ * handles reconnection with exponential backoff, and maintains an offline queue.
+ *
+ * Flow:
+ *  1. Yjs document changes → serialize update → encrypt with libsodium → send via WebSocket
+ *  2. Receive encrypted update from WebSocket → decrypt → apply to Yjs document
+ *  3. Offline: queue pending updates in memory; flush when connection restores
+ */
+
+// ─── Lazy sodium import ──────────────────────────────────────────────────────
+// Deferred to avoid SIGSEGV during module evaluation (see crypto/index.ts).
+let sodium: any = null;
+
+async function getSodium(): Promise<any> {
+  if (!sodium) {
+    const mod = await import('react-native-libsodium');
+    sodium = mod.default;
+  }
+  return sodium;
+}
+import * as Y from 'yjs';
+import type { EncryptedData } from '../types';
+import { encrypt, decrypt } from '../crypto';
+
+// ─── Configuration ───────────────────────────────────────────────────────────
+
+export interface WebSocketConfig {
+  /** WebSocket relay server URL (e.g. 'ws://localhost:8080') */
+  url: string;
+  /** Family ID for routing updates to the right group */
+  familyId: string;
+  /** Device ID for this client instance */
+  deviceId: string;
+  /** Encryption key for Yjs updates (shared family key) */
+  encryptionKey: Uint8Array;
+  /** Relay token obtained from POST /enroll (used for auth, never in URL) */
+  relayToken?: string;
+  /**
+   * Explicit opt-in for unauthenticated connections (test environments only).
+   * When false (default) and relayToken is missing, init() throws.
+   * When true, skips auth and sends identity directly.
+   */
+  allowUnauthenticated?: boolean;
+  /** Maximum reconnect delay in ms (default: 30s) */
+  maxReconnectDelay?: number;
+  /** Initial reconnect delay in ms (default: 1s) */
+  initialReconnectDelay?: number;
+}
+
+// ─── State ───────────────────────────────────────────────────────────────────
+
+export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export interface OfflineEntry {
+  update: Uint8Array;
+  listId: string;
+  timestamp: number;
+  /** WatermelonDB row id when this entry is also persisted to disk. */
+  persistedId?: string | null;
+}
+
+// ─── WebSocket Sync Client ───────────────────────────────────────────────────
+
+const MAX_QUEUE_SIZE = 1000;
+
+export class YjsWebSocketClient {
+  private config: WebSocketConfig;
+  private ws: WebSocket | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempt = 0;
+  private state: ConnectionState = 'disconnected';
+  private offlineQueue: OfflineEntry[] = [];
+  private encryptKey: Uint8Array;
+  private ready = false;
+  private disposed = false;
+  private authPending = true; // true until auth_ack received
+  private _ackTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  // Callbacks
+  onStateChange?: (state: ConnectionState) => void;
+  onError?: (error: Error) => void;
+  /** Called when a remote update is received and applied */
+  onRemoteUpdate?: (listId: string, update: Uint8Array) => void;
+  /** Called when the offline queue is drained */
+  onQueueDrained?: () => void;
+  /** Called when a notification message is received from the relay */
+  onNotification?: (listId: string, payload: EncryptedData, senderDeviceId: string) => void;
+
+  constructor(config: WebSocketConfig) {
+    this.config = config;
+    this.encryptKey = config.encryptionKey;
+  }
+
+  /**
+   * Initialise libsodium and connect.
+   */
+  async init(): Promise<void> {
+    await getSodium(); // triggers lazy import + sets module-level `sodium`
+    await sodium.ready;
+    this.ready = true;
+    // Restore updates that were queued offline in a previous process life —
+    // without this, killing the app loses edits that never reached the relay.
+    await this.restorePersistedQueue();
+    this.connect();
+  }
+
+  /**
+   * Load queue entries persisted by a previous session into the in-memory
+   * queue. Entries that no longer decrypt (e.g. key changed after a family
+   * reset) are dropped from disk.
+   */
+  private async restorePersistedQueue(): Promise<void> {
+    try {
+      const { loadQueueEntries, deleteQueueEntries } = await import('./offline-queue-store');
+      const persisted = await loadQueueEntries();
+      if (persisted.length === 0) return;
+
+      const undecryptable: string[] = [];
+      for (const entry of persisted) {
+        if (this.offlineQueue.length >= MAX_QUEUE_SIZE) break;
+        try {
+          const update = this.decryptUpdate(entry.payload, entry.listId);
+          this.offlineQueue.push({
+            update,
+            listId: entry.listId,
+            timestamp: entry.createdAt,
+            persistedId: entry.id,
+          });
+        } catch {
+          undecryptable.push(entry.id);
+        }
+      }
+      if (undecryptable.length > 0) {
+        await deleteQueueEntries(undecryptable);
+      }
+      if (this.offlineQueue.length > 0) {
+        console.log(`YjsWebSocket: restored ${this.offlineQueue.length} offline update(s) from disk`);
+      }
+    } catch (err) {
+      console.warn('YjsWebSocket: failed to restore persisted queue', err);
+    }
+  }
+
+  // ─── Connection Management ──────────────────────────────────────────────
+
+  private get reconnectDelay(): number {
+    const initial = this.config.initialReconnectDelay ?? 1000;
+    const max = this.config.maxReconnectDelay ?? 30_000;
+    // Exponential backoff with jitter
+    const delay = Math.min(initial * Math.pow(2, this.reconnectAttempt), max);
+    const jitter = Math.random() * 0.3 * delay;
+    return delay + jitter;
+  }
+
+  /**
+   * Connect (or reconnect) to the relay server.
+   */
+  connect(): void {
+    if (this.ws?.readyState === (typeof WebSocket !== 'undefined' ? WebSocket.OPEN : 1) ||
+        this.ws?.readyState === (typeof WebSocket !== 'undefined' ? WebSocket.CONNECTING : 0)) {
+      return;
+    }
+
+    this.setState('connecting');
+    this.ws = new WebSocket(this.config.url);
+
+    this.ws.onopen = () => {
+      this.reconnectAttempt = 0;
+      // State stays 'connecting' until auth_ack received
+      // (prevents sending updates before authentication)
+
+      if (this.config.relayToken) {
+        // Normal flow: authenticate via relay token
+        this.authPending = true;
+        // Client-side timeout: if no auth_ack within 10s, disconnect
+        const ackTimeout = setTimeout(() => {
+          if (this.authPending) {
+            this.onError?.(new Error('Authentication timeout: server did not respond within 10s'));
+            this.disconnect();
+          }
+        }, 10_000);
+        this._ackTimeout = ackTimeout;
+        this.sendMessage({
+          type: 'auth',
+          relayToken: this.config.relayToken,
+        });
+      } else if (this.config.allowUnauthenticated) {
+        // Test mode: skip auth, send identity directly
+        this.authPending = false;
+        this.setState('connected');
+        this.sendMessage({
+          type: 'identity',
+          familyId: this.config.familyId,
+          deviceId: this.config.deviceId,
+        });
+        this.flushOfflineQueue();
+      } else {
+        // Production: missing relayToken is a fatal error
+        this.onError?.(new Error(
+          'No relay token available. Call enrollWithRelay() first or set allowUnauthenticated=true in tests.',
+        ));
+        this.disconnect();
+      }
+    };
+
+    this.ws.onmessage = async (event) => {
+      try {
+        const data = JSON.parse(event.data as string) as RelayMessage;
+        await this.handleMessage(data);
+      } catch (err) {
+        console.warn('YjsWebSocket: failed to handle message', err);
+      }
+    };
+
+    this.ws.onerror = (event) => {
+      console.warn('YjsWebSocket: connection error', event);
+      this.setState('error');
+      this.onError?.(new Error('WebSocket connection error'));
+    };
+
+    this.ws.onclose = () => {
+      this.setState('disconnected');
+      this.scheduleReconnect();
+    };
+  }
+
+  /**
+   * Disconnect and clean up.
+   */
+  disconnect(): void {
+    this.disposed = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this._ackTimeout) {
+      clearTimeout(this._ackTimeout);
+      this._ackTimeout = null;
+    }
+    this.reconnectAttempt = 0;
+    if (this.ws) {
+      this.ws.onclose = null; // prevent reconnect
+      this.ws.close();
+      this.ws = null;
+    }
+    this.setState('disconnected');
+  }
+
+  private scheduleReconnect(): void {
+    if (this.disposed) return; // never reconnect after explicit disconnect
+    if (this.reconnectTimer) return; // already scheduled
+    const delay = this.reconnectDelay;
+    console.log(`YjsWebSocket: reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempt + 1})`);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.reconnectAttempt++;
+      this.connect();
+    }, delay);
+  }
+
+  private setState(newState: ConnectionState): void {
+    if (this.state !== newState) {
+      this.state = newState;
+      this.onStateChange?.(newState);
+    }
+  }
+
+  // ─── Sending Updates ───────────────────────────────────────────────────
+
+  /**
+   * Send a Yjs update for a specific list to the relay server.
+   * If offline, enqueue for later delivery.
+   */
+  sendUpdate(listId: string, update: Uint8Array): void {
+    if (!this.ready) {
+      console.warn('YjsWebSocket: libsodium not ready, enqueueing');
+      this.enqueueOffline(update, listId);
+      return;
+    }
+
+    if (this.state !== 'connected' || !this.ws) {
+      // Offline — queue it
+      this.enqueueOffline(update, listId);
+      return;
+    }
+
+    try {
+      const encrypted = this.encryptUpdate(update, listId);
+      this.sendMessage({
+        type: 'update',
+        familyId: this.config.familyId,
+        deviceId: this.config.deviceId,
+        listId,
+        payload: encrypted,
+      });
+    } catch (err) {
+      console.warn('YjsWebSocket: failed to encrypt/send update', err);
+      this.enqueueOffline(update, listId);
+    }
+  }
+
+  /**
+   * Send an encrypted notification to the relay server.
+   * Notifications are best-effort — if offline, the notification is dropped.
+   */
+  sendNotification(listId: string, encryptedPayload: EncryptedData): void {
+    if (this.state !== 'connected' || !this.ws) {
+      console.warn('YjsWebSocket: offline, notification dropped (non-critical)');
+      return; // Notifications are best-effort — don't queue
+    }
+
+    this.sendMessage({
+      type: 'notification',
+      familyId: this.config.familyId,
+      deviceId: this.config.deviceId,
+      listId,
+      payload: encryptedPayload,
+    });
+  }
+
+  /**
+   * Flush all queued updates to the relay server.
+   */
+  private flushOfflineQueue(): void {
+    if (this.offlineQueue.length === 0) return;
+
+    const queue = [...this.offlineQueue];
+    this.offlineQueue = [];
+    const delivered: Array<string | null | undefined> = [];
+
+    for (const entry of queue) {
+      if (this.state === 'connected' && this.ws) {
+        try {
+          const encrypted = this.encryptUpdate(entry.update, entry.listId);
+          this.sendMessage({
+            type: 'update',
+            familyId: this.config.familyId,
+            deviceId: this.config.deviceId,
+            listId: entry.listId,
+            payload: encrypted,
+          });
+          delivered.push(entry.persistedId);
+        } catch {
+          // Re-queue if send fails
+          this.offlineQueue.push(entry);
+        }
+      } else {
+        this.offlineQueue.push(entry);
+      }
+    }
+
+    if (delivered.some(Boolean)) {
+      this.deletePersisted(delivered);
+    }
+
+    if (this.offlineQueue.length === 0) {
+      this.onQueueDrained?.();
+    }
+  }
+
+  // ─── Receiving Updates ─────────────────────────────────────────────────
+
+  private async handleMessage(data: RelayMessage): Promise<void> {
+    switch (data.type) {
+      case 'auth_ack': {
+        // Authentication successful — clear timeout, send identity, flush queue
+        this.authPending = false;
+        if (this._ackTimeout) {
+          clearTimeout(this._ackTimeout);
+          this._ackTimeout = null;
+        }
+        this.setState('connected');
+        this.sendMessage({
+          type: 'identity',
+          familyId: this.config.familyId,
+          deviceId: this.config.deviceId,
+        });
+        this.flushOfflineQueue();
+        break;
+      }
+      case 'update': {
+        if (data.listId && data.payload) {
+          const decrypted = this.decryptUpdate(data.payload, data.listId);
+          this.onRemoteUpdate?.(data.listId, decrypted);
+        }
+        break;
+      }
+      case 'ack': {
+        // Server acknowledged — nothing to do
+        break;
+      }
+      case 'notification': {
+        if (data.listId && data.payload) {
+          this.onNotification?.(data.listId, data.payload, data.deviceId ?? '');
+        }
+        break;
+      }
+      case 'error': {
+        this.onError?.(new Error(data.message ?? 'Relay server error'));
+        break;
+      }
+      default:
+        console.warn('YjsWebSocket: unknown message type', (data as any).type);
+    }
+  }
+
+  // ─── Encryption / Decryption of Yjs Updates ───────────────────────────
+  // Uses listId as AAD (Additional Authenticated Data) to bind each
+  // ciphertext to its specific list context, preventing cross-list replay.
+
+  /**
+   * Encrypt a raw Yjs update (Uint8Array) using crypto/index.ts (XChaCha20-Poly1305).
+   * Uses listId as AAD to bind ciphertext to a specific list context.
+   */
+  private encryptUpdate(update: Uint8Array, listId: string): EncryptedData {
+    // Convert Uint8Array to base64 string for the encrypt function
+    const updateB64 = sodium.to_base64(update, sodium.base64_variants.ORIGINAL);
+    // We keep it simple by using the underlying sodium directly to avoid
+    // making sendUpdate async throughout the codebase.
+    const nonce = sodium.randombytes_buf(sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+    // Use listId as AAD to bind ciphertext to a specific list
+    const additionalData = new TextEncoder().encode(listId);
+    const cipherWithTag = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+      update,
+      additionalData,
+      null,
+      nonce,
+      this.encryptKey,
+    );
+    const abytes = sodium.crypto_aead_xchacha20poly1305_ietf_ABYTES;
+    const ciphertext = cipherWithTag.slice(0, cipherWithTag.length - abytes);
+    const tag = cipherWithTag.slice(cipherWithTag.length - abytes);
+
+    return {
+      ciphertext: sodium.to_base64(ciphertext, sodium.base64_variants.ORIGINAL),
+      iv: sodium.to_base64(nonce, sodium.base64_variants.ORIGINAL),
+      tag: sodium.to_base64(tag, sodium.base64_variants.ORIGINAL),
+    };
+  }
+
+  /**
+   * Decrypt an encrypted Yjs update using the listId as AAD.
+   * The listId must match what was used during encryption.
+   */
+  private decryptUpdate(data: EncryptedData, listId: string): Uint8Array {
+    const nonce = sodium.from_base64(data.iv, sodium.base64_variants.ORIGINAL);
+    const tag = sodium.from_base64(data.tag, sodium.base64_variants.ORIGINAL);
+    const ciphertext = sodium.from_base64(data.ciphertext, sodium.base64_variants.ORIGINAL);
+
+    const cipherWithTag = new Uint8Array(ciphertext.length + tag.length);
+    cipherWithTag.set(ciphertext);
+    cipherWithTag.set(tag, ciphertext.length);
+
+    const additionalData = new TextEncoder().encode(listId);
+
+    return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
+      null,
+      cipherWithTag,
+      additionalData,
+      nonce,
+      this.encryptKey,
+    );
+  }
+
+  // ─── Helpers ───────────────────────────────────────────────────────────
+
+  /**
+   * Enqueue an update for later delivery, dropping oldest entry if queue is full.
+   * When dropping, logs a warning and calls onError callback.
+   */
+  private enqueueOffline(update: Uint8Array, listId: string): void {
+    if (this.offlineQueue.length >= MAX_QUEUE_SIZE) {
+      const dropped = this.offlineQueue.shift(); // drop oldest
+      if (dropped?.persistedId) {
+        this.deletePersisted([dropped.persistedId]);
+      }
+      this.onError?.(new Error(
+        `Offline queue full (${MAX_QUEUE_SIZE}). Dropped oldest update for list ${dropped?.listId ?? 'unknown'}.`,
+      ));
+      console.warn(
+        `YjsWebSocket: offline queue full. Dropped ${dropped ? 1 : 0} oldest entry(s). ` +
+        `Queue now has ${this.offlineQueue.length} pending entries.`,
+      );
+    }
+    const entry: OfflineEntry = { update, listId, timestamp: Date.now(), persistedId: null };
+    this.offlineQueue.push(entry);
+    this.persistEntry(entry);
+  }
+
+  /**
+   * Best-effort disk persistence of a queued entry (encrypted wire envelope).
+   * The in-memory queue keeps working even if persistence fails.
+   */
+  private persistEntry(entry: OfflineEntry): void {
+    if (!this.ready) return; // sodium not ready — cannot encrypt for disk yet
+    try {
+      const encrypted = this.encryptUpdate(entry.update, entry.listId);
+      import('./offline-queue-store')
+        .then(({ saveQueueEntry }) => saveQueueEntry(entry.listId, encrypted, entry.timestamp))
+        .then((id) => {
+          entry.persistedId = id;
+        })
+        .catch(() => {});
+    } catch {
+      // encryption failed — in-memory only
+    }
+  }
+
+  /** Best-effort removal of delivered/dropped entries from disk. */
+  private deletePersisted(ids: Array<string | null | undefined>): void {
+    import('./offline-queue-store')
+      .then(({ deleteQueueEntries }) => deleteQueueEntries(ids))
+      .catch(() => {});
+  }
+
+  private sendMessage(msg: RelayMessage): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(msg));
+    }
+  }
+
+  /**
+   * Get the current connection state.
+   */
+  getState(): ConnectionState {
+    return this.state;
+  }
+
+  /**
+   * Get the number of pending offline updates.
+   */
+  getPendingCount(): number {
+    return this.offlineQueue.length;
+  }
+}
+
+// ─── Relay Message Types ─────────────────────────────────────────────────────
+
+interface RelayMessage {
+  type: 'auth' | 'auth_ack' | 'identity' | 'update' | 'ack' | 'error' | 'notification';
+  familyId?: string;
+  deviceId?: string;
+  listId?: string;
+  payload?: EncryptedData;
+  message?: string;
+  relayToken?: string;
+}

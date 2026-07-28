@@ -1,0 +1,51 @@
+{
+  "manifest": {
+    "publishingInformation": {
+      "locales": {
+        "en-US": {
+          "name": "GroceryApp Assistant",
+          "summary": "Add items to your shared family grocery list using voice.",
+          "description": "GroceryApp lets you and your family share a real-time grocery list. With this skill, you can add items, check your list, and mark items as done — hands-free.\n\nTo get started, link your GroceryApp account in the Alexa app. Then try:\n- \"Alexa, ask GroceryApp to add milk\"\n- \"Alexa, ask GroceryApp what's on my list\"\n- \"Alexa, ask GroceryApp to mark eggs as done\"",
+          "examplePhrases": [
+            "Alexa, ask GroceryApp to add milk to my list",
+            "Alexa, ask GroceryApp what's on my grocery list",
+            "Alexa, ask GroceryApp to mark eggs as done"
+          ],
+          "keywords": ["grocery", "shopping", "list", "family", "groceries"]
+        }
+      },
+      "isAvailableWorldwide": true,
+      "testingInstructions": "No special testing instructions.",
+      "category": "SHOPPING",
+      "distributionCountries": []
+    },
+    "apis": {
+      "custom": {
+        "endpoint": {
+          "uri": "arn:aws:lambda:us-east-1:000000000000:function:GroceryAppAlexaSkill",
+          "sourceDir": "."
+        }
+      }
+    },
+    "permissions": [],
+    "privacyAndCompliance": {
+      "locales": {
+        "en-US": {
+          "privacyPolicyUrl": "https://groceryapp.example.com/privacy",
+          "termsOfUseUrl": "https://groceryapp.example.com/terms"
+        }
+      },
+      "containsAds": false,
+      "isExportCompliant": true
+    },
+    "accountLinkingRequest": {
+      "type": "AUTH_CODE",
+      "authorizationUrl": "https://relay.groceryapp.example.com/oauth/authorize",
+      "clientId": "alexa-groceryapp-skill",
+      "accessTokenUrl": "https://relay.groceryapp.example.com/oauth/token",
+      "scopes": ["grocery:read", "grocery:write"],
+      "defaultTokenExpirationInSeconds": 86400,
+      "domains": ["relay.groceryapp.example.com"]
+    }
+  }
+}
