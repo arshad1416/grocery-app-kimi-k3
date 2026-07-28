@@ -17,3 +17,7 @@ app/src/main/java/inline/
 
 # Bundle artifacts
 *.jsbundle
+# *.jsbundle does NOT match index.android.bundle — that gap is how a
+# credential-bearing production bundle got tracked. Match it explicitly.
+app/src/main/assets/index.android.bundle
+*.hbc

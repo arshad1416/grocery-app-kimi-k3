@@ -1,0 +1,26 @@
+# Root .gitignore — added after credential-bearing build artifacts were
+# found tracked (see GOAL_PROMPT_NOTES.md, credential-purge goal).
+# Build outputs must never be committed: a production JS bundle carried a
+# read-write Turso token into git history.
+
+# ── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+node_modules_bak/
+
+# ── Build artifacts (JS bundles carry inlined secrets) ───────────────────────
+GroceryApp/dist-android/
+GroceryApp/android/app/src/main/assets/index.android.bundle
+*.hbc
+*.jsbundle
+
+# ── Local environment (never commit real DSNs/tokens) ────────────────────────
+.env
+.env.local
+
+# ── Keys (generated locally, provisioned via deploy env) ─────────────────────
+relay-server/keys/
+
+# ── OS junk ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
