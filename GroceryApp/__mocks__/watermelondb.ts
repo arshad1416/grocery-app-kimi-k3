@@ -159,11 +159,19 @@ export class Model {
   }
 }
 
-// Legacy TS decorators used in src/storage/models.ts — no-ops in tests
-export const field = (_name: string) => (_target: any, _key: string) => {};
-export const relation = (_table: string, _key: string) => (_target: any, _key2: string) => {};
+// Legacy TS decorators — models.ts applies them imperatively via
+// Object.defineProperty(proto, key, decorator(...)), so the mocks must return
+// a valid descriptor (plain value prop is fine; mock records are plain data).
+const mockDescriptor = (): PropertyDescriptor => ({
+  configurable: true,
+  enumerable: true,
+  writable: true,
+  value: undefined,
+});
+export const field = (_name: string) => mockDescriptor;
+export const relation = (_table: string, _key: string) => mockDescriptor;
 export const readonly = (_target: any, _key: string) => {};
-export const date = (_name: string) => (_target: any, _key: string) => {};
+export const date = (_name: string) => mockDescriptor;
 
 // Default export doubles as SQLiteAdapter for `adapters/sqlite`
 export default class SQLiteAdapter {

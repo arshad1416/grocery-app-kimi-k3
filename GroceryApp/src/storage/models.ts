@@ -13,10 +13,55 @@
  * Encrypted fields (name, notes, displayName, description, etc.) are stored
  * as base64 ciphertext strings in the database and decrypted at the
  * application layer.
+ *
+ * IMPORTANT — why this file does NOT use @decorator syntax:
+ * Metro's Hermes transform profile (`transform.engine=hermes`,
+ * `unstable_transformProfile=hermes-stable`, used by every dev build on
+ * device) preserves native class syntax and class fields. In that profile,
+ * legacy-decorated class fields compile to `_initializerWarningHelper(...)`
+ * assignments that throw "Decorating class property failed. Please ensure
+ * that transform-class-properties is enabled and runs after the decorators
+ * transform." EVERY model instantiation threw on-device, so every
+ * WatermelonDB write silently failed while reads of empty tables appeared
+ * to work. Jest never caught it because @nozbe/watermelondb is mocked with
+ * decorator no-ops. Babel-level fixes (loose class-properties) cannot be
+ * scoped correctly under Metro: `overrides.test` crashes Metro's config
+ * loader, `.babelrc` is ignored for the Hermes-profile transform cache key,
+ * and global loose class-properties breaks Flow declaration-only statics in
+ * react-native's own Event.js/DOMException.js. Applying the decorators
+ * imperatively below is profile-proof: it emits plain Object.defineProperty
+ * calls with the exact descriptors the decorator machinery would install.
  */
 
 import { Model } from '@nozbe/watermelondb';
-import { field, readonly, relation, date } from '@nozbe/watermelondb/decorators';
+import { field, relation } from '@nozbe/watermelondb/decorators';
+
+// ─── Imperative decorator application ────────────────────────────────────────
+
+type DecoratorFactory = (
+  target: object,
+  key: string,
+  descriptor: undefined,
+) => PropertyDescriptor;
+
+/**
+ * Apply a WatermelonDB decorator to a model prototype imperatively.
+ * Equivalent to `@decorator` on the class field, but with no decorator
+ * syntax for Babel to miscompile (see file header).
+ */
+function defineModelProp(
+  prototype: object,
+  key: string,
+  decorator: DecoratorFactory,
+): void {
+  Object.defineProperty(prototype, key, decorator(prototype, key, undefined));
+}
+
+const fieldProp = (proto: object, key: string, column: string): void =>
+  defineModelProp(proto, key, field(column) as unknown as DecoratorFactory);
+
+const relationProp = (proto: object, key: string, table: string, column: string): void =>
+  defineModelProp(proto, key, relation(table, column) as unknown as DecoratorFactory);
 
 // ─── GroceryList Model ──────────────────────────────────────────────────────
 
@@ -26,19 +71,35 @@ export class GroceryListModel extends Model {
   static associations = {
     grocery_items: { type: 'has_many' as const, foreignKey: 'list_id' },
   } as const;
-
-  @field('family_id') familyId: string;
-  @field('name') name: string;                         // encrypted
-  @field('description') description: string | null;     // encrypted
-  @field('store_preference') storePreference: string | null; // encrypted
-  @field('is_active') isActive: boolean;
-  @field('is_deleted') isDeleted: boolean;
-  @field('deleted_at') deletedAt: number | null;
-  @field('version') version: number;
-  @field('sync_status') recordSyncStatus: string;
-  @field('created_at') createdAt: number;
-  @field('updated_at') updatedAt: number;
 }
+
+// Declaration merging: types the decorated instance fields without emitting
+// class fields (an emitted field would shadow the prototype accessor).
+export interface GroceryListModel {
+  familyId: string;
+  name: string;                              // encrypted
+  description: string | null;                // encrypted
+  storePreference: string | null;            // encrypted
+  isActive: boolean;
+  isDeleted: boolean;
+  deletedAt: number | null;
+  version: number;
+  recordSyncStatus: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+fieldProp(GroceryListModel.prototype, 'familyId', 'family_id');
+fieldProp(GroceryListModel.prototype, 'name', 'name');
+fieldProp(GroceryListModel.prototype, 'description', 'description');
+fieldProp(GroceryListModel.prototype, 'storePreference', 'store_preference');
+fieldProp(GroceryListModel.prototype, 'isActive', 'is_active');
+fieldProp(GroceryListModel.prototype, 'isDeleted', 'is_deleted');
+fieldProp(GroceryListModel.prototype, 'deletedAt', 'deleted_at');
+fieldProp(GroceryListModel.prototype, 'version', 'version');
+fieldProp(GroceryListModel.prototype, 'recordSyncStatus', 'sync_status');
+fieldProp(GroceryListModel.prototype, 'createdAt', 'created_at');
+fieldProp(GroceryListModel.prototype, 'updatedAt', 'updated_at');
 
 // ─── GroceryItem Model ──────────────────────────────────────────────────────
 
@@ -48,70 +109,123 @@ export class GroceryItemModel extends Model {
   static associations = {
     grocery_lists: { type: 'belongs_to' as const, key: 'list_id' },
   } as const;
-
-  @field('list_id') listId: string;
-  @field('family_id') familyId: string;
-  @field('name') name: string;                         // encrypted
-  @field('quantity') quantity: number;
-  @field('unit') unit: string;                         // encrypted
-  @field('category') category: string;
-  @field('is_checked') isChecked: boolean;
-  @field('added_by') addedBy: string;
-  @field('assigned_to') assignedTo: string | null;
-  @field('notes') notes: string | null;                // encrypted
-  @field('image_url') imageUrl: string | null;
-  @field('sort_order') sortOrder: number;
-  @field('is_deleted') isDeleted: boolean;
-  @field('deleted_at') deletedAt: number | null;
-  @field('version') version: number;
-  @field('sync_status') recordSyncStatus: string;
-  @field('created_at') createdAt: number;
-  @field('updated_at') updatedAt: number;
-
-  @relation('grocery_lists', 'list_id') list: GroceryListModel;
 }
+
+export interface GroceryItemModel {
+  listId: string;
+  familyId: string;
+  name: string;                              // encrypted
+  quantity: number;
+  unit: string;                              // encrypted
+  category: string;
+  isChecked: boolean;
+  addedBy: string;
+  assignedTo: string | null;
+  notes: string | null;                      // encrypted
+  imageUrl: string | null;
+  sortOrder: number;
+  isDeleted: boolean;
+  deletedAt: number | null;
+  version: number;
+  recordSyncStatus: string;
+  createdAt: number;
+  updatedAt: number;
+  list: GroceryListModel;
+}
+
+fieldProp(GroceryItemModel.prototype, 'listId', 'list_id');
+fieldProp(GroceryItemModel.prototype, 'familyId', 'family_id');
+fieldProp(GroceryItemModel.prototype, 'name', 'name');
+fieldProp(GroceryItemModel.prototype, 'quantity', 'quantity');
+fieldProp(GroceryItemModel.prototype, 'unit', 'unit');
+fieldProp(GroceryItemModel.prototype, 'category', 'category');
+fieldProp(GroceryItemModel.prototype, 'isChecked', 'is_checked');
+fieldProp(GroceryItemModel.prototype, 'addedBy', 'added_by');
+fieldProp(GroceryItemModel.prototype, 'assignedTo', 'assigned_to');
+fieldProp(GroceryItemModel.prototype, 'notes', 'notes');
+fieldProp(GroceryItemModel.prototype, 'imageUrl', 'image_url');
+fieldProp(GroceryItemModel.prototype, 'sortOrder', 'sort_order');
+fieldProp(GroceryItemModel.prototype, 'isDeleted', 'is_deleted');
+fieldProp(GroceryItemModel.prototype, 'deletedAt', 'deleted_at');
+fieldProp(GroceryItemModel.prototype, 'version', 'version');
+fieldProp(GroceryItemModel.prototype, 'recordSyncStatus', 'sync_status');
+fieldProp(GroceryItemModel.prototype, 'createdAt', 'created_at');
+fieldProp(GroceryItemModel.prototype, 'updatedAt', 'updated_at');
+relationProp(GroceryItemModel.prototype, 'list', 'grocery_lists', 'list_id');
 
 // ─── FamilyMember Model ─────────────────────────────────────────────────────
 
 export class FamilyMemberModel extends Model {
   static table = 'family_members' as const;
+}
 
-  @field('family_id') familyId: string;
-  @field('display_name') displayName: string;           // encrypted
-  @field('avatar_url') avatarUrl: string | null;
+export interface FamilyMemberModel {
+  familyId: string;
+  displayName: string;                       // encrypted
+  avatarUrl: string | null;
   // 'role' column still exists in the schema (kept to avoid a migration) but is
   // intentionally unmapped: roles were never enforced and are dropped in v1.
-  @field('is_active') isActive: boolean;
-  @field('is_deleted') isDeleted: boolean;
-  @field('deleted_at') deletedAt: number | null;
-  @field('version') version: number;
-  @field('sync_status') recordSyncStatus: string;
-  @field('joined_at') joinedAt: number;
-  @field('updated_at') updatedAt: number;
+  isActive: boolean;
+  isDeleted: boolean;
+  deletedAt: number | null;
+  version: number;
+  recordSyncStatus: string;
+  joinedAt: number;
+  updatedAt: number;
 }
+
+fieldProp(FamilyMemberModel.prototype, 'familyId', 'family_id');
+fieldProp(FamilyMemberModel.prototype, 'displayName', 'display_name');
+fieldProp(FamilyMemberModel.prototype, 'avatarUrl', 'avatar_url');
+fieldProp(FamilyMemberModel.prototype, 'isActive', 'is_active');
+fieldProp(FamilyMemberModel.prototype, 'isDeleted', 'is_deleted');
+fieldProp(FamilyMemberModel.prototype, 'deletedAt', 'deleted_at');
+fieldProp(FamilyMemberModel.prototype, 'version', 'version');
+fieldProp(FamilyMemberModel.prototype, 'recordSyncStatus', 'sync_status');
+fieldProp(FamilyMemberModel.prototype, 'joinedAt', 'joined_at');
+fieldProp(FamilyMemberModel.prototype, 'updatedAt', 'updated_at');
 
 // ─── Notification Model ────────────────────────────────────────────────────
 
 export class NotificationModel extends Model {
   static table = 'notifications' as const;
-
-  @field('event_type') eventType: string;
-  @field('timestamp') timestamp: number;
-  @field('sender_device_id') senderDeviceId: string;
-  @field('list_id') listId: string;
-  @field('list_name') listName: string;
-  @field('item_id') itemId: string;
-  @field('item_name') itemName: string;
-  @field('item_category') itemCategory: string;
-  @field('is_read') isRead: boolean;
 }
+
+export interface NotificationModel {
+  eventType: string;
+  timestamp: number;
+  senderDeviceId: string;
+  listId: string;
+  listName: string;
+  itemId: string;
+  itemName: string;
+  itemCategory: string;
+  isRead: boolean;
+}
+
+fieldProp(NotificationModel.prototype, 'eventType', 'event_type');
+fieldProp(NotificationModel.prototype, 'timestamp', 'timestamp');
+fieldProp(NotificationModel.prototype, 'senderDeviceId', 'sender_device_id');
+fieldProp(NotificationModel.prototype, 'listId', 'list_id');
+fieldProp(NotificationModel.prototype, 'listName', 'list_name');
+fieldProp(NotificationModel.prototype, 'itemId', 'item_id');
+fieldProp(NotificationModel.prototype, 'itemName', 'item_name');
+fieldProp(NotificationModel.prototype, 'itemCategory', 'item_category');
+fieldProp(NotificationModel.prototype, 'isRead', 'is_read');
 
 // ─── Offline Queue Model ────────────────────────────────────────────────────
 
 export class OfflineQueueModel extends Model {
   static table = 'offline_queue' as const;
-
-  @field('list_id') listId: string;
-  @field('payload') payload: string;                    // encrypted (EncryptedData JSON)
-  @field('created_at') createdAt: number;
 }
+
+export interface OfflineQueueModel {
+  listId: string;
+  payload: string;                           // encrypted (EncryptedData JSON)
+  createdAt: number;
+}
+
+fieldProp(OfflineQueueModel.prototype, 'listId', 'list_id');
+fieldProp(OfflineQueueModel.prototype, 'payload', 'payload');
+fieldProp(OfflineQueueModel.prototype, 'createdAt', 'created_at');
+
