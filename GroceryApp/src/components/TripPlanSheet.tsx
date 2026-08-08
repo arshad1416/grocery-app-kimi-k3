@@ -3,7 +3,9 @@
  *
  * Displays:
  *  - Per-stop sections: store name, items with prices, subtotal
- *  - Total row with savings vs. most expensive single store
+ *  - Total row with savings vs. the best single-store trip (plan.savings
+ *    from trip-plan.ts — one-stop baseline, same as stop-optimizer's
+ *    savingsVsOneStop; floored at 0)
  *  - "Unassigned" section for items without prices
  */
 

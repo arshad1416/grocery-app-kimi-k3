@@ -27,6 +27,7 @@ import {
   getStoredRecoveryPhrase,
 } from '../identity/recovery';
 import { setupMasterKey, getMasterKey } from '../crypto/index';
+import { updateSettings } from '../config/settings';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/deepLinks';
 
@@ -56,10 +57,20 @@ export default function RecoveryScreen({ navigation, route }: Props) {
           const existing = await getStoredRecoveryPhrase();
           if (existing) {
             setPhrase(existing);
-          } else {
-            // Generate a new one
+          } else if (!(await getMasterKey())) {
+            // No key yet (initial setup) — mint the phrase and key together.
             const newPhrase = await generateRecoveryPhrase();
             setPhrase(newPhrase);
+          } else {
+            // A master key exists but no phrase is stored on this device.
+            // recoverFromPhrase() now persists the phrase on join, so this is
+            // only reachable on devices that joined before that fix. Raise an
+            // actionable error instead of letting generateRecoveryPhrase()
+            // throw its opaque "after data has been encrypted" guard.
+            throw new Error(
+              'No recovery phrase is stored on this device. Re-enter your ' +
+              "family's 12-word phrase via Recover from Backup to store it here.",
+            );
           }
         }
       } catch (err) {
@@ -142,9 +153,15 @@ export default function RecoveryScreen({ navigation, route }: Props) {
     }
   }, [phraseInput, navigation]);
 
-  // Handle confirmed safe storage
+  // Handle confirmed safe storage — the ONLY place the first-run backup
+  // acknowledgement is persisted. Dismissing this screen (back button,
+  // backgrounding) must NOT set it, so the Home banner re-surfaces until the
+  // user explicitly confirms.
   const handleConfirmed = useCallback(() => {
     setConfirmed(true);
+    updateSettings({ recoveryPhraseAcknowledged: true }).catch(() => {
+      // Persistence failure just means the banner shows again next launch.
+    });
     Alert.alert(
       'Recovery Phrase Stored',
       'Great! Your recovery phrase has been saved. Keep it in a safe place — you will need it if you ever lose access to all your devices.',
@@ -245,8 +262,10 @@ function ShowMode({ phrase, onConfirmed, onCopy, confirmed }: ShowModeProps) {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Your Recovery Phrase</Text>
         <Text style={styles.warningText}>
-          Write this down and store it safely. You will need it if you lose access
-          to all your devices. Anyone with this phrase can access your family data!
+          Write these 12 words down and store them safely. Your lists are
+          end-to-end encrypted and there is no account or password reset: if
+          you lose all your devices and this phrase, your data is gone for
+          good. Anyone with this phrase can access your family data!
         </Text>
 
         <View style={styles.phraseBox}>
@@ -267,7 +286,9 @@ function ShowMode({ phrase, onConfirmed, onCopy, confirmed }: ShowModeProps) {
         <Text style={styles.warningText}>
           Treat this like your house key — never share it unnecessarily, never
           store it in plain text on your device, and never enter it into any
-          website or app claiming to be from us.
+          website or app claiming to be from us. If this device later joins a
+          different family, it gets that family's key and phrase instead — the
+          phrase that matters is always your current family's.
         </Text>
 
         {!confirmed ? (

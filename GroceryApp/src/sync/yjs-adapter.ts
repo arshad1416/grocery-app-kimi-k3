@@ -497,3 +497,14 @@ export function destroyDoc(listId: string): void {
 export function getActiveDocIds(): string[] {
   return Array.from(docs.keys());
 }
+
+/**
+ * Destroy every Yjs document (data-wipe path). After this, any getDoc()
+ * call starts from a fresh, empty document.
+ */
+export function destroyAllDocs(): void {
+  for (const doc of docs.values()) {
+    doc.destroy();
+  }
+  docs.clear();
+}

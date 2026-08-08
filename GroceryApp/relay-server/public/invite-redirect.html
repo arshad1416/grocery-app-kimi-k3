@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Open in GroceryApp</title>
+  <title>Open in PantryRun</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -80,7 +80,7 @@
 <body>
   <div class="container">
     <div class="logo">🛒</div>
-    <h1>Open in GroceryApp</h1>
+    <h1>Open in PantryRun</h1>
     <p>You've been invited to join a shared grocery list!</p>
 
     <!-- Primary: try to open the app via deep link -->
@@ -105,12 +105,13 @@
       var token = params.get('token') || '';
 
       // ── Construct deep link URLs ────────────────────────────────────
-      var appSchemeUrl = 'grocceryapp://invite?token=' + encodeURIComponent(token);
+      var appSchemeUrl = 'groceryapp://invite?token=' + encodeURIComponent(token);
       var httpsFallbackUrl = 'https://groceryapp.app/invite?token=' + encodeURIComponent(token);
 
-      // App Store / Play Store URLs — replace with real URLs
-      var iosStoreUrl = 'https://apps.apple.com/app/groceryapp/idXXXXXXXXXX';
-      var androidStoreUrl = 'https://play.google.com/store/apps/details?id=com.groceryapp.app';
+      // App Store / Play Store URLs
+      // iOS: replace XXXXXXXXXX with the real numeric App ID once the ASC record is created
+      var iosStoreUrl = 'https://apps.apple.com/app/idXXXXXXXXXX';
+      var androidStoreUrl = 'https://play.google.com/store/apps/details?id=com.shiftlogichq.pantryrun';
 
       // ── Detect platform ─────────────────────────────────────────────
       var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -156,7 +157,7 @@
             clearTimeout(redirectTimer);
             redirectTimer = null;
           }
-          statusMsg.textContent = 'Opening GroceryApp…';
+          statusMsg.textContent = 'Opening PantryRun…';
         }
       }
 

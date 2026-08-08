@@ -93,9 +93,12 @@ export class SyncManager {
         this.wsClient.sendUpdate(listId, updates);
       }
 
-      // Persist to WatermelonDB
+      // Persist to WatermelonDB. A failed write must reach the user, not just
+      // the console (see reportPersistError) — but the rejection itself must
+      // stay handled: an unhandled rejection inside a Yjs update observer is
+      // worse than a swallowed warning.
       this.persistListToDB(listId).catch((err) => {
-        console.warn('SyncManager: failed to persist after Yjs change', err);
+        this.reportPersistError('failed to persist after Yjs change', err);
       });
     };
 
@@ -186,10 +189,40 @@ export class SyncManager {
     const items = extractItems(listId);
     this.callbacks.onRemoteItemsUpdate?.(listId, items);
 
-    // Persist updated state to WatermelonDB
+    // Persist updated state to WatermelonDB. Same failure class as the local
+    // observer above: a family member's update that fails to persist is lost
+    // on restart, so it gets the same user-visible signal.
     this.persistListToDB(listId).catch((err) => {
-      console.warn('SyncManager: failed to persist remote update', err);
+      this.reportPersistError('failed to persist remote update', err);
     });
+  }
+
+  /**
+   * Surface a failed WatermelonDB write to the user.
+   *
+   * A bare console.warn here is exactly how the app previously looked fine
+   * while saving nothing (see fresh-install-persistence.test.ts). Sentry is
+   * dead in production and error-handler.ts is imported by nothing, so the
+   * only signal a user can see is the sync indicator: set the store's error
+   * state, which SyncIndicator renders as a red dot plus the message. The
+   * copy says "save", not "sync" — the failure is local persistence, and
+   * calling it a sync error would mislead.
+   */
+  private reportPersistError(context: string, err: unknown): void {
+    // Keep the console diagnostic alongside the user-visible signal.
+    console.warn(`SyncManager: ${context}`, err);
+    // Dynamic import: useSyncStore imports syncManager, so a static import
+    // here would create a require cycle.
+    import('../state/useSyncStore')
+      .then(({ useSyncStore }) => {
+        useSyncStore.setState({
+          syncState: 'error',
+          error: "Couldn't save recent changes to this device",
+        });
+      })
+      .catch(() => {
+        // The reporter must never become an unhandled rejection itself.
+      });
   }
 
   // ─── WatermelonDB Persistence ──────────────────────────────────────────

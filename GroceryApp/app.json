@@ -3,13 +3,13 @@
     "owner": "shiftlogichq",
     "name": "PantryRun",
     "slug": "GroceryApp",
-    "version": "1.30.0",
+    "version": "1.31.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "scheme": "groceryapp",
     "plugins": [
-      "sentry-expo",
+      "@sentry/react-native/expo",
       [
         "react-native-libsodium",
         {}
@@ -25,21 +25,19 @@
     ],
     "ios": {
       "bundleIdentifier": "com.shiftlogichq.pantryrun",
+      "buildNumber": "1",
       "supportsTablet": true,
       "associatedDomains": [
         "applinks:groceryapp.app"
       ],
-      "entitlements": {
-        "com.apple.security.application-groups": [
-          "group.com.shiftlogichq.pantryrun"
-        ],
-        "com.apple.developer.siri": true
-      },
       "infoPlist": {
         "NSCameraUsageDescription": "Scan barcodes to add items to your grocery list, scan QR codes to join your family, and photograph store flyers for price extraction",
         "NSPhotoLibraryUsageDescription": "Select a store flyer photo from your library so PantryRun can read its prices",
-        "NSMicrophoneUsageDescription": "Add items to your grocery list using voice commands",
-        "NSSpeechRecognitionUsageDescription": "Convert voice commands to grocery list items",
+        "NSLocalNetworkUsageDescription": "PantryRun connects to your self-hosted sync relay on your local network to keep your family's grocery lists in sync",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true
+        },
         "ITSAppUsesNonExemptEncryption": true
       },
       "privacyManifests": {
@@ -116,6 +114,7 @@
         }
       ],
       "package": "com.shiftlogichq.pantryrun",
+      "versionCode": 31,
       "packagingOptions": {
         "pickFirst": ["**/libc++_shared.so"]
       }

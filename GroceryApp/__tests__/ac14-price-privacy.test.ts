@@ -102,20 +102,20 @@ describe('AC-14a: Price Store — pricingOptedIn Check', () => {
 });
 
 describe('AC-14b: SettingsScreen — Privacy Disclosure on First Enable', () => {
-  it('disclosure text warns about anonymized item names', () => {
+  it('disclosure text is honest: no item names leave the device in v1', () => {
     const disclosureText =
-      'Enabling pricing sends anonymized item names to price sources. Your shopping habits are not tracked or stored. You can disable this anytime.';
+      'Enabling pricing matches your grocery list against locally stored prices — from flyers you scan and prices you enter. In this version, your item names never leave this device. Your shopping habits are not tracked or stored. You can disable this anytime.';
 
-    expect(disclosureText).toContain('anonymized item names');
+    expect(disclosureText).toContain('never leave this device');
     expect(disclosureText).toContain('not tracked or stored');
     expect(disclosureText).toContain('disable this anytime');
   });
 
-  it('privacy note shown after opt-in describes hashing', () => {
-    const privacyNote = 'Item names are normalized and hashed before being sent to price sources.';
+  it('privacy note shown after opt-in describes local-only matching', () => {
+    const privacyNote = 'Price matching happens on this device against your local price list. Item names are not sent to any server in this version.';
 
-    expect(privacyNote).toContain('normalized');
-    expect(privacyNote).toContain('hashed');
+    expect(privacyNote).toContain('on this device');
+    expect(privacyNote).toContain('not sent to any server');
   });
 
   it('self-host note indicates local lookups', () => {

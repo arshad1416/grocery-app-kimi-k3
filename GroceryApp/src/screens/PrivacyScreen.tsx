@@ -158,9 +158,6 @@ export default function PrivacyScreen({ navigation }: Props) {
     );
   }
 
-  // Sentry is enabled unless explicitly disabled
-  const sentryEnabled = settings.sentryEnabled !== false;
-
   return (
     <ScrollView style={[styles.container, { backgroundColor: theme.bg }]}>
       {/* ── Header ──────────────────────────────────────────────────── */}
@@ -186,7 +183,7 @@ export default function PrivacyScreen({ navigation }: Props) {
         <InfoRow
           icon="👨‍👩‍👧‍👦"
           label="Family Sync"
-          description="Syncs through your self-hosted or managed relay. List data is end-to-end encrypted — the relay can't read it. The relay briefly stores the encrypted updates (auto-deleted after 30 days) so offline devices can catch up."
+          description="Syncs through your self-hosted relay. List data is end-to-end encrypted — the relay can't read it. The relay briefly stores the encrypted updates (auto-deleted after 30 days) so offline devices can catch up."
           theme={theme}
         />
         <InfoRow
@@ -218,12 +215,6 @@ export default function PrivacyScreen({ navigation }: Props) {
           theme={theme}
         />
         <InfoRow
-          icon="🎤"
-          label="Microphone"
-          description="Used only for voice input (when enabled). Audio is processed on-device."
-          theme={theme}
-        />
-        <InfoRow
           icon="🔔"
           label="Notifications"
           description="Used for local shopping reminders only. No remote push notifications."
@@ -233,39 +224,38 @@ export default function PrivacyScreen({ navigation }: Props) {
 
       {/* ── Opt-In Controls ─────────────────────────────────────────── */}
       <Section title="Privacy Controls" theme={theme}>
+        {/* Crash reporting is NOT active in v1: no Sentry DSN is configured in
+            any build, so initSentry() never initializes and nothing is ever
+            sent. Showing a toggle that claims data "is sent to Sentry" would
+            be a false in-app statement — show the truth instead. The
+            sentryEnabled setting and sentry.ts remain for a future release
+            (which must re-declare Crash Data on both stores first). */}
+        <InfoRow
+          icon="📊"
+          label="No Analytics or Crash Reporting"
+          description="This version sends no analytics, crash reports, or telemetry to anyone. If a future update adds optional crash reporting, it will be disclosed here and in the store listings first."
+          theme={theme}
+        />
+
         <ToggleRow
-          label="Crash Reporting"
-          description="Anonymous crash data sent to Sentry. No personal or grocery data included."
-          value={sentryEnabled}
+          label="Barcode Lookups"
+          description="When on, scanning a barcode sends the barcode number — and nothing else — to the Open Food Facts public database to fetch the product name."
+          value={(settings as any).barcodeScanningEnabled ?? false}
           onValueChange={async (v) => {
-            if (!v) {
-              Alert.alert(
-                'Disable Crash Reporting?',
-                'Anonymous crash reports help us fix bugs. No personal data is included. You can re-enable this anytime.',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'Disable',
-                    onPress: () => handleUpdate({ sentryEnabled: false }),
-                  },
-                ],
-              );
-            } else {
-              await handleUpdate({ sentryEnabled: true });
-            }
+            await handleUpdate({ barcodeScanningEnabled: v } as any);
           }}
           theme={theme}
         />
 
         <ToggleRow
           label="Price Lookups"
-          description="Sends hashed item names to price sources. Your actual item names are never sent."
+          description="Lets PantryRun match your list against locally stored prices (from flyers you scan and prices you enter). Matching happens on this device."
           value={settings.pricingOptedIn ?? false}
           onValueChange={async (v) => {
             if (v) {
               Alert.alert(
                 'Enable Price Lookups?',
-                'Normalized, hashed item names will be sent to price sources to fetch approximate prices. Your shopping habits are not tracked. You can disable this anytime.',
+                'Price lookups match your grocery list against locally stored prices — from flyers you scan and prices you enter. In this version, your item names never leave this device. You can disable this anytime.',
                 [
                   { text: 'Cancel', style: 'cancel' },
                   {
@@ -289,22 +279,13 @@ export default function PrivacyScreen({ navigation }: Props) {
         </Text>
         <View style={styles.bulletList}>
           <Text style={[styles.bulletItem, { color: theme.secondaryText }]}>
-            • <Text style={{ fontWeight: '600', color: theme.text }}>Delete all data:</Text> Uninstall the app
+            • <Text style={{ fontWeight: '600', color: theme.text }}>Delete all data:</Text> Settings → Delete All Data (or uninstall the app)
           </Text>
           <Text style={[styles.bulletItem, { color: theme.secondaryText }]}>
             • <Text style={{ fontWeight: '600', color: theme.text }}>Clear price data:</Text> Settings → Pricing → Clear Local Prices
           </Text>
           <Text style={[styles.bulletItem, { color: theme.secondaryText }]}>
-            • <Text style={{ fontWeight: '600', color: theme.text }}>Leave family:</Text> Unpair your device to remove synced data from relay
-          </Text>
-          <Text style={[styles.bulletItem, { color: theme.secondaryText }]}>
-            • <Text style={{ fontWeight: '600', color: theme.text }}>Managed relay deletion:</Text> Email{' '}
-            <Text
-              style={{ color: theme.primary }}
-              onPress={() => Linking.openURL('mailto:privacy@groceryapp.app')}
-            >
-              privacy@groceryapp.app
-            </Text>
+            • <Text style={{ fontWeight: '600', color: theme.text }}>Leave family:</Text> Unpair your device — the relay's encrypted copies expire automatically within 30 days
           </Text>
         </View>
       </Section>
@@ -334,7 +315,7 @@ export default function PrivacyScreen({ navigation }: Props) {
       {/* ── Version Info ────────────────────────────────────────────── */}
       <View style={styles.versionContainer}>
         <Text style={[styles.versionText, { color: theme.secondaryText }]}>
-          PantryRun v1.03 · Privacy-first grocery lists
+          PantryRun v1.30 · Privacy-first grocery lists
         </Text>
       </View>
 

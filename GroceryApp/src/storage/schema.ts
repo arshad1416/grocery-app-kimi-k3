@@ -11,7 +11,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 5,
+  version: 6,
   tables: [
     // ─── Grocery Lists ────────────────────────────────────────────────────
     tableSchema({
@@ -102,7 +102,26 @@ export const schema = appSchema({
         { name: 'created_at', type: 'number' },
       ],
     }),
+
+    // ─── Entitlements ────────────────────────────────────────────
+    // Local backing store for PantryRun Plus. The family Yjs document carries
+    // the entitlement record E2E-encrypted between devices, but Yjs document
+    // state is never persisted — this table is what makes the entitlement
+    // survive an app restart. Only src/config/entitlements.ts reads/writes it.
+    tableSchema({
+      name: 'entitlements',
+      columns: [
+        { name: 'family_id', type: 'string' },
+        { name: 'product_id', type: 'string' },
+        { name: 'platform', type: 'string' },           // 'ios' | 'android'
+        { name: 'transaction_id', type: 'string' },
+        { name: 'purchased_at', type: 'number' },
+        { name: 'expires_at', type: 'number', isOptional: true },
+        { name: 'source', type: 'string' },             // 'purchase' | 'restore' | 'sync'
+        { name: 'updated_at', type: 'number' },
+      ],
+    }),
   ],
 });
 
-export type TableName = 'grocery_lists' | 'grocery_items' | 'family_members' | 'notifications' | 'offline_queue';
+export type TableName = 'grocery_lists' | 'grocery_items' | 'family_members' | 'notifications' | 'offline_queue' | 'entitlements';

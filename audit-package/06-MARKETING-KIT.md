@@ -1,28 +1,38 @@
 # PantryRun — Marketing Kit
 
-Copy claims only shipped v1 features (no Alexa/Google Assistant, no managed
-plan — both hidden in v1). Siri, price comparison, and the trip optimizer are
-shipped and claimable. **Flyer scanning carries a caveat:** the camera-capture
-path is currently broken (`01-USABILITY-AUDIT.md` #3) — only adding an
-existing photo works — so the copy below says "Add a photo" rather than
-"Snap a photo". Restore the stronger wording once that bug is fixed.
+Copy claims only shipped features. **Claimable:** shared E2EE family
+lists, offline-first sync, self-hosted relay, 12-word recovery phrase, flyer
+scanning (photo-add), local price display from scanned flyers, opt-in barcode
+lookup, in-app Delete All Data, **and — restored for the PantryRun Plus
+release — the Trip Optimizer** ("which stores save you the most"; ships
+behind the $14.99/yr family IAP; the savings figure is honest: savings vs.
+the cheapest single-store trip). **NOT claimable — do not write copy for
+these:** Siri or any voice input (no voice feature ships; the mic
+entitlements were removed), the weekly-deals feed and cross-store
+price comparison outside the Trip Optimizer (compiled out with the community
+price database),
+Alexa/Google Assistant, and any managed/cloud plan. **Flyer scanning carries
+a caveat:** the camera-capture path is currently broken
+(`01-USABILITY-AUDIT.md` #3) — only adding an existing photo works — so the
+copy below says "Add a photo" rather than "Snap a photo". Restore the
+stronger wording once that bug is fixed.
 
 ---
 
 ## 1. Store-listing copy
 
 ### Apple App Store
-- **Name (≤30):** `PantryRun: Family Grocery List` *(28 chars)*
+- **Name (≤30):** `PantryRun: Family Grocery List` *(30 chars — exactly at the limit)*
 - **Subtitle (≤30):** `Private shared lists & prices` *(29 chars)*
 - **Promotional text (≤170):**
-  `Your family's grocery list, end-to-end encrypted. Compare local prices, scan store flyers, and find which stores save you the most — without giving up your data.`
+  `Your family's grocery list, end-to-end encrypted. Works offline, syncs through a relay you control, and reads store flyers into your local price list.` *(150 chars)*
 - **Keywords (≤100 chars):**
-  `grocery,shopping list,family,shared list,price compare,flyer,deals,private,encrypted,meal,pantry`
+  `grocery,shopping list,family,shared list,private,encrypted,offline,flyer,prices,pantry,sync` *(91 chars)*
 
 ### Google Play
-- **Title (≤30):** `PantryRun: Family Grocery List`
+- **Title (≤30):** `PantryRun: Family Grocery List` *(30 chars)*
 - **Short description (≤80):**
-  `Private, encrypted family grocery lists with local price comparison.` *(68 chars)*
+  `Private, encrypted family grocery lists. Offline-first, no accounts, no ads.` *(76 chars)*
 
 ### Full description (both stores)
 
@@ -43,29 +53,41 @@ existing photo works — so the copy below says "Add a photo" rather than
 > • No ads, no analytics, no tracking
 > • Run the sync server in your own home if you want to — it's open
 >
-> **💰 Pay less for the same cart**
-> • See local prices next to your list items (opt-in)
-> • Add a photo of a store flyer — AI reads the deals into your price list
-> • Trip Optimizer: "Costco + No Frills saves you $11.40 this week"
-> • Weekly flyer deals matched to what's already on your list
+> **💰 Prices from your own flyers**
+> • Add a photo of a store flyer — PantryRun reads the prices into your
+>   local price list (opt-in)
+> • See those prices next to your list items while you plan
+> • Scan a barcode to add a product by name (opt-in lookup)
 >
-> **🎙️ Hands-free**
-> Add items with Siri or by voice while your hands are full.
+> **🗺️ Trip Optimizer — PantryRun Plus**
+> • The cheapest way to split your list across nearby stores — "Costco +
+>   No Frills saves you $11.40 this week"
+> • Every plan shows exactly what you save vs. doing the whole trip at the
+>   cheapest single store
+> • One purchase unlocks your whole family — $14.99/year (auto-renewing;
+>   manage or cancel anytime in your store account)
 >
 > **🔑 Your keys, your data**
 > A 12-word recovery phrase — like a crypto wallet, but for your grocery
-> list. Lose a phone, not your data.
+> list. Lose a phone, not your data. And when you want out: Settings →
+> Delete All Data erases everything, no questions asked.
 >
 > PantryRun is built for households that think a grocery list shouldn't be
 > anyone else's business. Privacy policy: https://groceryapp.app/privacy
 
-*(Both stores ≤4000 chars — this is ~1,600.)*
+*(Both stores ≤4000 chars — this is ~1,500.)*
 
 **Listing don'ts (accuracy per Apple 2.3.1 / Play metadata policy):** don't
-mention Alexa/Google Assistant, "premium", "subscription", or a managed/cloud
-plan until those ship; don't claim Android↔iOS family sync until the
-two-device cross-platform smoke test has actually been run; don't say "snap"
-or "photograph" a flyer until the camera-capture bug is fixed.
+mention Siri or voice input (nothing voice-shaped ships), a deals
+feed or cross-store price comparison outside the Trip Optimizer (compiled
+out), Alexa/Google Assistant, or a managed/cloud plan until those ship. Trip
+Optimizer and "PantryRun Plus" subscription copy ARE now allowed — keep the
+savings framing at "vs. the cheapest single store" (what the app actually
+computes) and always state price + renewal ($14.99/year, auto-renewing).
+Don't
+claim Android↔iOS family sync until the two-device cross-platform smoke test
+has actually been run; don't say "snap" or "photograph" a flyer until the
+camera-capture bug is fixed.
 
 ---
 
@@ -96,13 +118,19 @@ or "photograph" a flyer until the camera-capture bug is fixed.
 > on both. [links]
 
 **Post 3 — Instagram/Facebook (household decision-maker)**
-> We visited 2 stores instead of 4 and still saved $23 this week 🛒
+> Our grocery list is nobody's business but ours 🛒
 >
-> PantryRun compares prices across your local stores and tells you which trip
-> is actually worth it. Your list syncs with your partner instantly — and
-> it's fully encrypted, so your shopping habits stay in your family.
+> PantryRun keeps your family's list in sync — add milk on your phone, it
+> shows up on your partner's in the aisle. Fully encrypted, works offline,
+> no account needed. Scan a store flyer and the prices land right on your
+> list.
 >
-> Free on iPhone & Android. #grocerylist #mealplanning #privacy
+> And when it's time to shop: PantryRun Plus splits your list across nearby
+> stores and shows what the split saves you vs. one-stop shopping 💰 —
+> "Costco + No Frills saves you $11.40 this week." One purchase covers the
+> whole family.
+>
+> Free on iPhone & Android · Plus $14.99/yr. #grocerylist #mealplanning #privacy
 
 ---
 

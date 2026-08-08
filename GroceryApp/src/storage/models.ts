@@ -229,3 +229,32 @@ fieldProp(OfflineQueueModel.prototype, 'listId', 'list_id');
 fieldProp(OfflineQueueModel.prototype, 'payload', 'payload');
 fieldProp(OfflineQueueModel.prototype, 'createdAt', 'created_at');
 
+// ─── Entitlement Model ────────────────────────────────────────────────
+// Local backing record for PantryRun Plus. Read/written ONLY by
+// src/config/entitlements.ts — the single module that computes entitlement
+// state (see that file's header for the invariant).
+
+export class EntitlementModel extends Model {
+  static table = 'entitlements' as const;
+}
+
+export interface EntitlementModel {
+  familyId: string;
+  productId: string;
+  platform: string;                          // 'ios' | 'android'
+  transactionId: string;
+  purchasedAt: number;
+  expiresAt: number | null;
+  source: string;                            // 'purchase' | 'restore' | 'sync'
+  updatedAt: number;
+}
+
+fieldProp(EntitlementModel.prototype, 'familyId', 'family_id');
+fieldProp(EntitlementModel.prototype, 'productId', 'product_id');
+fieldProp(EntitlementModel.prototype, 'platform', 'platform');
+fieldProp(EntitlementModel.prototype, 'transactionId', 'transaction_id');
+fieldProp(EntitlementModel.prototype, 'purchasedAt', 'purchased_at');
+fieldProp(EntitlementModel.prototype, 'expiresAt', 'expires_at');
+fieldProp(EntitlementModel.prototype, 'source', 'source');
+fieldProp(EntitlementModel.prototype, 'updatedAt', 'updated_at');
+

@@ -15,15 +15,17 @@ managed infrastructure).
 
 | # | Feature | Why it's paywallable | State today |
 |---|---|---|---|
-| 1 | **Trip Optimizer** — "Costco + No Frills saves you $11.40 this week"; multi-store split plans, per-store totals, savings vs one-stop | The hero: quantifiable weekly value; already matches the annual fee in 1-2 trips. No mainstream competitor has it (only free-web GroceryChop and Flipp's nascent AI basket) | ✅ Shipped; optimizer core unit-tested (`stop-optimizer.test.ts`). Note: `trip-plan.ts` has no direct unit tests (exercised via UI only) — add coverage before gating it for money. Needs an entitlement gate |
+| 1 | **Trip Optimizer** — "Costco + No Frills saves you $11.40 this week"; multi-store split plans, per-store totals, savings vs one-stop | The hero: quantifiable weekly value; already matches the annual fee in 1-2 trips. No mainstream competitor has it (only free-web GroceryChop and Flipp's nascent AI basket) | ✅ In the codebase but **gated out of v1** (`TRIP_OPTIMIZER_ENABLED = false` — never reachable in a release build); ships now with PantryRun Plus behind the entitlement gate (`src/config/entitlements.ts`). Optimizer core unit-tested (`stop-optimizer.test.ts`); `trip-plan.ts` now has direct unit tests too (`trip-plan.test.ts`, 20 cases, added with the Plus release) |
 | 2 | **AI Flyer Scanning (managed)** — photograph any store flyer; vision model extracts prices into your price list | Real per-use inference cost (~$0.005/image via Qwen-VL) makes "unlimited scanning" a natural subscription; self-hosters with their own Ollama keep it free (community goodwill + zero cost to you) | ✅ Extraction pipeline shipped & tested end-to-end. ⚠️ **Camera capture is currently broken** (placeholder URIs, never calls `takePictureAsync` — see `01-USABILITY-AUDIT.md` #3, CRITICAL); only the image-picker path works, and the scan icon is hidden by default (#11). **Must be fixed before this can be sold.** Managed backend = flip `QWEN_API_KEY` |
 | 3 | **Smart Home / Voice Assistants** — Alexa & Google Assistant ("add milk to my list" from the kitchen speaker) | Household convenience feature with hosting cost (webhook) and clear willingness-to-pay in family segment; Siri stays free (on-device, costless) | ⚠️ Gated off in v1. **Prereqs before selling** (from MONETIZATION.md): deploy webhook, in-app key-custody disclosure, privacy-label updates, ideally derived sync subkey. Ship in the *second* premium release |
 | 4 | **Managed Relay** — zero-setup cloud sync for non-technical families (we run the relay; still E2EE — custody fix means the relay cannot read anything) | Removes the #1 adoption barrier (self-hosting) for mainstream users; direct hosting cost | ⚠️ Tier exists but hidden in v1; needs ops (hosting, key provisioning, support) + IAP before enabling |
 
 Launch sequencing: **Plus v1 = features 1+2+4** (all shipped or ops-only).
-Feature 3 joins when its prereqs land. Grandfather any pre-paywall users of
-the optimizer (it shipped free in v1 — don't claw it back; gate it for *new*
-installs after the paywall release).
+Feature 3 joins when its prereqs land. No grandfathering exists or is needed:
+the optimizer was gated off before v1 shipped (`TRIP_OPTIMIZER_ENABLED =
+false` in the v1 binary), so no pre-paywall cohort ever had it free and there
+is nothing to claw back. (Corrects earlier guidance written before the v1
+gating decision.)
 
 ## Recommended price
 

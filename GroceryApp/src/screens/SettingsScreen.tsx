@@ -46,6 +46,13 @@ import ContributeConsentModal from '../components/ContributeConsentModal';
 import { useShareInvite } from '../hooks/useShareInvite';
 import { friendlyError } from '../utils/friendlyError';
 import { useThemeStore, useActiveTheme } from '../state/useThemeStore';
+import {
+  useEntitlementStore,
+  purchasePlus,
+  restorePlus,
+  PLUS_PAYWALL_COPY,
+  PLUS_PRICE_DISPLAY,
+} from '../config/entitlements';
 
 import { themeColors } from '../components/groceryTheme';
 
@@ -220,6 +227,10 @@ export default function SettingsScreen({ navigation }: Props) {
 
   const [voicePairingCode, setVoicePairingCode] = useState('');
   const [linkingVoice, setLinkingVoice] = useState(false);
+
+  // PantryRun Plus (entitlement computed solely in src/config/entitlements.ts)
+  const isPlus = useEntitlementStore((s) => s.isPlus);
+  const plusBusy = useEntitlementStore((s) => s.busy);
 
   const getRelayHttpUrl = useCallback(() => {
     if (!settings) return '';
@@ -592,7 +603,7 @@ export default function SettingsScreen({ navigation }: Props) {
               setPricingDisclosureShown(true);
               Alert.alert(
                 'Privacy Disclosure',
-                'Enabling pricing sends anonymized item names to price sources. Your shopping habits are not tracked or stored. You can disable this anytime.',
+                'Enabling pricing matches your grocery list against locally stored prices — from flyers you scan and prices you enter. In this version, your item names never leave this device. Your shopping habits are not tracked or stored. You can disable this anytime.',
                 [
                   { text: 'Cancel', style: 'cancel', onPress: () => {
                     setPricingDisclosureShown(false);
@@ -616,13 +627,25 @@ export default function SettingsScreen({ navigation }: Props) {
         />
         {pricingOptedIn && (
           <Text style={[styles.privacyNote, { color: theme.secondaryText }]}>
-            Item names are normalized and hashed before being sent to price sources.
+            Price matching happens on this device against your local price list. Item names are not sent to any server in this version.
           </Text>
         )}
-        {/* Voice Input / Barcode Scanning toggles removed in v1: they were
-            no-ops (never read anywhere), and both are always-available quick-add
-            methods in the Add Item sheet. Reintroduce only if they gate a real
-            behavior. */}
+        {/* Barcode Lookups: gates the Open Food Facts lookup that names
+            scanned products. Consent is normally granted via the inline
+            prompt at the scanner; this toggle is the persistent off switch
+            the privacy policy promises. (Voice Input toggle stays removed:
+            voice is an on-device text modal, nothing to gate.) */}
+        <ToggleRow
+          label="Barcode Lookups (Opt-In)"
+          value={(settings as any).barcodeScanningEnabled ?? false}
+          onValueChange={(v) => handleUpdate({ barcodeScanningEnabled: v } as any)}
+          theme={theme}
+        />
+        {((settings as any).barcodeScanningEnabled ?? false) && (
+          <Text style={[styles.privacyNote, { color: theme.secondaryText }]}>
+            Scanned barcode numbers are sent to the Open Food Facts public database to fetch product names. Nothing else is sent.
+          </Text>
+        )}
       </View>
 
       {/* ── Voice Assistant Linking (disabled in v1 — see flag at top) ── */}
@@ -661,7 +684,61 @@ export default function SettingsScreen({ navigation }: Props) {
       </View>
       )}
 
-      {/* ── Security ────────────────────────────────────────────────── */}
+      {/* ── PantryRun Plus ────────────────────────────────────────────────── */}
+      {/* PantryRun Plus. Entitlement state is computed ONLY in
+          src/config/entitlements.ts; this section reads the store and routes
+          purchase/restore to it. This replaces the old MANAGED_TIER
+          subscription-key field — the two must never ship together
+          (Guideline 3.1.1: no dead purchase path). */}
+      <View style={[styles.section, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>PantryRun Plus</Text>
+        {isPlus ? (
+          <Text style={[styles.sectionDescription, { color: theme.secondaryText }]}>
+            ✨ Plus is active for your family. Trip Optimizer is unlocked on
+            every family device.
+          </Text>
+        ) : (
+          <>
+            <Text style={[styles.sectionDescription, { color: theme.secondaryText }]}>
+              {PLUS_PAYWALL_COPY}
+            </Text>
+            <TouchableOpacity
+              style={[styles.securityButton, { backgroundColor: theme.primary }, plusBusy && { opacity: 0.5 }]}
+              disabled={plusBusy}
+              onPress={() => {
+                purchasePlus().then((ok) => {
+                  if (!ok) {
+                    const err = useEntitlementStore.getState().lastError;
+                    if (err) Alert.alert('Purchase failed', err);
+                  }
+                });
+              }}
+            >
+              <Text style={styles.securityButtonText}>
+                ✨ Subscribe • {PLUS_PRICE_DISPLAY}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.securityButton, styles.securityButtonSecondary, plusBusy && { opacity: 0.5 }]}
+              disabled={plusBusy}
+              onPress={() => {
+                restorePlus().then((ok) => {
+                  if (!ok) {
+                    const err = useEntitlementStore.getState().lastError;
+                    if (err) Alert.alert('Restore failed', err);
+                  }
+                });
+              }}
+            >
+              <Text style={styles.securityButtonTextSecondary}>
+                ↺ Restore Purchase
+              </Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+
+      {/* Security */}
       <View style={[styles.section, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Security</Text>
         <Text style={[styles.sectionDescription, { color: theme.secondaryText }]}>
@@ -920,6 +997,54 @@ export default function SettingsScreen({ navigation }: Props) {
           }}
         >
           <Text style={styles.clearPricesText}>Clear Local Prices</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ── Danger Zone: Delete All Data (store-required deletion path) ── */}
+      <View style={[styles.section, { backgroundColor: theme.cardBg, borderColor: '#f44336' }]}>
+        <Text style={[styles.sectionTitle, { color: '#f44336' }]}>Danger Zone</Text>
+        <Text style={[styles.sectionDescription, { color: theme.secondaryText }]}>
+          Permanently erase everything PantryRun stores on this device: your lists, settings, encryption keys, and device identity.
+        </Text>
+        <TouchableOpacity
+          style={[styles.clearPricesBtn, { borderColor: '#f44336', backgroundColor: '#f44336' }]}
+          accessibilityRole="button"
+          accessibilityLabel="Delete all data"
+          onPress={() => {
+            Alert.alert(
+              'Delete All Data?',
+              'This permanently erases all grocery lists, settings, and encryption keys on this device. Without your 12-word recovery phrase (or another family device), this data is UNRECOVERABLE — there is no account and no server-side reset. Encrypted copies on your relay expire automatically within 30 days and can never be decrypted again.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete Everything',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      const { deleteAllLocalData } = await import('../services/dataWipe');
+                      const result = await deleteAllLocalData();
+                      const failed = Object.keys(result.errors);
+                      if (failed.length === 0) {
+                        Alert.alert(
+                          'All Data Deleted',
+                          'Everything stored on this device has been erased. Restart the app to start fresh.',
+                        );
+                      } else {
+                        Alert.alert(
+                          'Deleted With Warnings',
+                          `Your encryption keys were destroyed, but these steps reported errors: ${failed.join(', ')}. Uninstalling the app removes anything left over.`,
+                        );
+                      }
+                    } catch (err) {
+                      Alert.alert('Delete Failed', err instanceof Error ? err.message : 'Please try again.');
+                    }
+                  },
+                },
+              ],
+            );
+          }}
+        >
+          <Text style={[styles.clearPricesText, { color: '#fff' }]}>Delete All Data</Text>
         </TouchableOpacity>
       </View>
 

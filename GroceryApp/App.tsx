@@ -158,6 +158,16 @@ function App() {
           console.warn('[init] Sync bootstrap failed:', e);
         }
 
+        // Resolve the PantryRun Plus entitlement (local table + family-doc
+        // observer). Entitlement state is computed ONLY inside
+        // src/config/entitlements.ts; everything else reads its store.
+        try {
+          const { resolveEntitlement } = await import('./src/config/entitlements');
+          await resolveEntitlement();
+        } catch (e) {
+          console.warn('[init] Entitlement resolution failed:', e);
+        }
+
         // Store branding comes from the static fallback maps in
         // src/pricing/store-branding.ts; the remote (Turso-backed) branding
         // fetch is gated off in v1 along with the rest of the Turso surface.
@@ -230,12 +240,16 @@ function App() {
     );
   }
 
-  // Show splash screen while loading
+  // 3D Motion Graphics Splash — shown before any other screen. The motion
+  // sequence LOOPS while `ready` is false: on a first launch that covers the
+  // whole account-creation flow (device keypair, family membership, recovery
+  // phrase — all provisioned inside runInit → bootstrapSync). Once init has
+  // settled the splash exits at its next scene boundary and calls onFinish.
   if (showSplash) {
     const SplashScreen = require('./src/screens/SplashScreen').default;
     return (
       <SafeAreaProvider>
-        <SplashScreen onFinish={() => setShowSplash(false)} />
+        <SplashScreen canFinish={ready} onFinish={() => setShowSplash(false)} />
       </SafeAreaProvider>
     );
   }

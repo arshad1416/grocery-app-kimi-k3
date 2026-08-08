@@ -3,6 +3,17 @@
  *
  * Exact enumeration for ≤7 stores (2^7 = 128 subsets), greedy fallback
  * for larger sets. Pure on-device, <5ms for typical lists.
+ *
+ * Plans are compared coverage-first: a candidate that assigns more items
+ * always beats one that assigns fewer, and cost breaks ties. (Comparing on
+ * cost alone let cheaper subsets win by silently dropping items, since
+ * unassigned items cost 0.)
+ *
+ * `savings` is the one-stop baseline: the cost of the best single-store
+ * trip minus the optimized total, floored at 0 — the same comparison
+ * stop-optimizer.ts reports as `savingsVsOneStop`. The baseline store is
+ * chosen coverage-first too, so a store carrying one cheap item cannot
+ * masquerade as the one-stop alternative.
  */
 
 import type { PriceResult } from './types';
@@ -181,11 +192,32 @@ export function computeTripPlan(
 
   const effectiveMaxStops = Math.min(maxStops, relevantStores.length);
 
-  let bestResult: {
+  type SubsetResult = {
     stops: TripPlanStop[];
     unassigned: TripPlanItem[];
     totalCost: number;
-  } | null = null;
+  };
+
+  // Coverage-first comparison: more assigned items wins; cost breaks ties.
+  // (Comparing on cost alone let cheaper subsets win by silently dropping
+  // items, since unassigned items cost 0.)
+  const isBetterPlan = (a: SubsetResult, b: SubsetResult): boolean =>
+    a.unassigned.length < b.unassigned.length ||
+    (a.unassigned.length === b.unassigned.length && a.totalCost < b.totalCost);
+
+  // One-stop baseline: the best single-store trip (coverage first, then
+  // cost) — the same baseline stop-optimizer.ts uses for savingsVsOneStop.
+  let bestOneStopId = relevantStores[0];
+  let bestOneStop = evaluateSubset(items, [bestOneStopId], perStorePrices, storeNameMap);
+  for (const sid of relevantStores.slice(1)) {
+    const result = evaluateSubset(items, [sid], perStorePrices, storeNameMap);
+    if (isBetterPlan(result, bestOneStop)) {
+      bestOneStop = result;
+      bestOneStopId = sid;
+    }
+  }
+
+  let bestResult: SubsetResult | null = null;
 
   if (relevantStores.length <= 7) {
     // ── Exact enumeration ────────────────────────────────────────────────
@@ -193,63 +225,42 @@ export function computeTripPlan(
 
     for (const subset of allSubsets) {
       const result = evaluateSubset(items, subset, perStorePrices, storeNameMap);
-      if (!bestResult || result.totalCost < bestResult.totalCost) {
+      if (!bestResult || isBetterPlan(result, bestResult)) {
         bestResult = result;
       }
     }
   } else {
     // ── Greedy fallback ──────────────────────────────────────────────────
-    // Start with the single best store, greedily add stores that reduce cost
-    let bestSingleStoreId = relevantStores[0];
-    let bestSingleCost = Infinity;
-
-    for (const sid of relevantStores) {
-      const result = evaluateSubset(items, [sid], perStorePrices, storeNameMap);
-      if (result.totalCost < bestSingleCost) {
-        bestSingleCost = result.totalCost;
-        bestSingleStoreId = sid;
-      }
-    }
-
-    const selected = new Set<string>([bestSingleStoreId]);
-    bestResult = evaluateSubset(items, Array.from(selected), perStorePrices, storeNameMap);
+    // Start with the best single store, greedily add stores that improve
+    // the plan (more coverage, or equal coverage at lower cost).
+    const selected = new Set<string>([bestOneStopId]);
+    bestResult = bestOneStop;
 
     while (selected.size < effectiveMaxStops) {
       let bestCandidate: string | null = null;
-      let bestCandidateCost = bestResult.totalCost;
+      let bestCandidateResult: SubsetResult = bestResult;
 
       for (const sid of relevantStores) {
         if (selected.has(sid)) continue;
         const trial = new Set([...selected, sid]);
         const result = evaluateSubset(items, Array.from(trial), perStorePrices, storeNameMap);
-        if (result.totalCost < bestCandidateCost) {
-          bestCandidateCost = result.totalCost;
+        if (isBetterPlan(result, bestCandidateResult)) {
+          bestCandidateResult = result;
           bestCandidate = sid;
         }
       }
 
       if (bestCandidate === null) break;
-      if (bestCandidateCost >= bestResult.totalCost) break;
 
       selected.add(bestCandidate);
-      bestResult = evaluateSubset(items, Array.from(selected), perStorePrices, storeNameMap);
+      bestResult = bestCandidateResult;
     }
   }
 
-  // Compute savings: worst single-store cost minus optimized cost
-  let worstSingleCost = 0;
-  for (const item of items) {
-    let maxPrice = 0;
-    for (const sid of relevantStores) {
-      const pr = perStorePrices[sid]?.[item.id];
-      if (pr && pr.price > maxPrice) {
-        maxPrice = pr.price;
-      }
-    }
-    worstSingleCost += maxPrice * item.quantity;
-  }
-
-  const savings = worstSingleCost - bestResult!.totalCost;
+  // Savings vs. the best single-store trip, floored at 0 below. When the
+  // plan covers items no single store carries, the baseline omits them, so
+  // the figure is conservative rather than inflated.
+  const savings = bestOneStop.totalCost - bestResult!.totalCost;
 
   return {
     stops: bestResult!.stops,

@@ -1,7 +1,18 @@
 # Store Listings — Name Check, Descriptions, Screenshots, Intro Video
 
-Researched 2026-07-08. Complements `06-MARKETING-KIT.md` (social posts,
-channels); this doc is the submission-ready listing package.
+Researched 2026-07-08; reworked 2026-07-28 so that **every claim maps to
+something a v1 user can actually do**; **Trip Optimizer copy restored
+2026-07-28 for the PantryRun Plus release** (the feature now ships behind a
+real, purchasable entitlement — $14.99/yr, one purchase unlocks the family —
+so the savings-led story is claimable again; its savings figure is honest:
+savings vs. the cheapest single-store trip). Still removed from all shipping
+copy: Siri/voice input (no voice feature ships;
+the mic entitlements were removed), the weekly-deals feed (compiled out with
+the community price database), and cross-store price comparison outside the
+Trip Optimizer (other prices come only from flyers you scan and prices you
+enter). Complements
+`06-MARKETING-KIT.md` (social posts, channels); this doc is the
+submission-ready listing package.
 
 ---
 
@@ -36,14 +47,14 @@ search: `PantryRun: Family Grocery List`.
 
 | Field | Value | Limit |
 |---|---|---|
-| **Name** | `PantryRun: Family Grocery List` | 28/30 |
+| **Name** | `PantryRun: Family Grocery List` | 30/30 — exactly at the limit (the earlier "28/30" count predated the StopHop→PantryRun rename) |
 | **Subtitle** | `Private shared lists & prices` | 29/30 |
-| **Promotional text** | `Your family's grocery list, end-to-end encrypted. Compare local prices, scan store flyers, and find which stores save you the most — without giving up your data.` | 160/170 |
-| **Keywords** | `grocery,shopping list,family,shared list,price compare,flyer,deals,private,encrypted,meal,pantry` | 98/100 |
+| **Promotional text** | `Your family's grocery list, end-to-end encrypted. Works offline, syncs through a relay you control, and reads store flyers into your local price list.` | 150/170 |
+| **Keywords** | `grocery,shopping list,family,shared list,private,encrypted,offline,flyer,prices,pantry,sync` | 91/100 |
 | **Category** | Primary: Shopping · Secondary: Food & Drink | |
 | **Age rating** | 4+ | |
 
-**Description** (≤4000 chars; ~1,700 used):
+**Description** (≤4000 chars; ~1,500 used):
 
 > **The grocery list that respects your family's privacy.**
 >
@@ -60,30 +71,46 @@ search: `PantryRun: Family Grocery List`.
 > • End-to-end encrypted sync (XChaCha20-Poly1305)
 > • No account, no email, no phone number — ever
 > • No ads, no analytics, no tracking
-> • Run the sync server in your own home if you want — it's open source
+> • Run the sync server in your own home — it's open source
 >
-> PAY LESS FOR THE SAME CART
-> • See local prices next to your list items (opt-in)
-> • Add a photo of a store flyer — AI reads the deals into your price list
-> • Trip Optimizer: "Costco + No Frills saves you $11.40 this week"
-> • Weekly flyer deals matched to what's already on your list
+> PRICES FROM YOUR OWN FLYERS
+> • Add a photo of a store flyer — PantryRun reads the prices into your
+>   local price list (opt-in)
+> • See those prices next to your list items while you plan
+> • Scan a barcode to add a product by name (opt-in lookup)
 >
-> HANDS-FREE
-> Add items with Siri or by voice while your hands are full.
+> TRIP OPTIMIZER — PANTRYRUN PLUS
+> • The cheapest way to split your list across nearby stores — "Costco +
+>   No Frills saves you $11.40 this week"
+> • Every plan shows exactly what you save vs. doing the whole trip at the
+>   cheapest single store
+> • One purchase unlocks your whole family — PantryRun Plus, $14.99/year
+>   (auto-renewing; manage or cancel anytime in your store account)
 >
 > YOUR KEYS, YOUR DATA
 > A 12-word recovery phrase — like a crypto wallet, but for your grocery
-> list. Lose a phone, not your data.
+> list. Lose a phone, not your data. And when you want out: Settings →
+> Delete All Data erases everything, no questions asked.
 >
 > PantryRun is built for households that think a grocery list shouldn't be
 > anyone else's business.
 >
 > Privacy policy & terms: https://groceryapp.app/privacy
 
-**Accuracy guardrails (Apple 2.3.1):** no Alexa/Google Assistant, no
-"premium/subscription", no managed-cloud plan (all hidden/off in v1). "Add a
+**Accuracy guardrails (Apple 2.3.1):** no Alexa/Google Assistant, no Siri or
+voice claims (no voice feature ships), no deals-feed claims, no managed-cloud
+plan (hidden/off). Trip Optimizer claims are now allowed — the feature ships
+behind the PantryRun Plus IAP — but the savings framing must stay "vs. the
+cheapest single store" (that is what `trip-plan.ts` computes; do not inflate
+it to "vs. the most expensive store"). Apple requires auto-renewing
+subscription metadata: title (PantryRun Plus), length (1 year), price
+($14.99) must appear in the description — the PLUS block above satisfies
+this. "Add a
 photo of a store flyer" — keep this wording until the camera-capture fix is
-device-verified, then "Snap a photo" is fine.
+device-verified, then "Snap a photo" is fine. "No analytics" is claimable
+because v1 declares no data collection on either store (no Sentry DSN ships);
+purchase data introduced by the IAP is handled in the privacy-label update
+(see 08-SUBMISSION-HANDOFF).
 
 ---
 
@@ -91,16 +118,12 @@ device-verified, then "Snap a photo" is fine.
 
 | Field | Value | Limit |
 |---|---|---|
-| **Title** | `PantryRun: Family Grocery List` | 28/30 |
-| **Short description** | `Private, encrypted family grocery lists with local price comparison.` | 68/80 |
+| **Title** | `PantryRun: Family Grocery List` | 30/30 |
+| **Short description** | `Private, encrypted family grocery lists. Offline-first, no accounts, no ads.` | 76/80 |
 | **Category** | Shopping · Tags: shopping list, family organizer | |
 | **Content rating** | Everyone | |
 
-**Full description** (≤4000): use the Apple description above verbatim minus
-the Siri line's "with Siri" (Android: "by voice"), i.e.:
-
-> HANDS-FREE
-> Add items by voice while your hands are full.
+**Full description** (≤4000): use the Apple description above verbatim.
 
 Play allows light formatting/emoji; the 🛒🔒💰 variants from
 `06-MARKETING-KIT.md` are fine here if you prefer the emoji headers.
@@ -128,12 +151,16 @@ shot list + capture pipeline, deliberately not fabricated mockups.
 |---|---|---|
 | 1 | GroceryListScreen with a realistic 10-item list, 2 checked off | **Your family's list, always in sync** |
 | 2 | Two-device composite (or notification moment): item appears on second phone | **Add milk here, it shows up there** |
-| 3 | List with price badges visible + store totals bar | **See local prices on your list** |
-| 4 | Trip Plan sheet: "2 stops — save $11.40" proposal view | **Which stores are worth the trip** |
-| 5 | FlyerScanFlow result: "14 prices captured from [store]" | **Point at a flyer, get the deals** |
-| 6 | PrivacyScreen ("How Your Data Is Handled" card) | **Encrypted end-to-end. No account. No ads.** |
-| 7 | Pairing QR screen (with dummy QR) | **Invite family with one QR code** |
-| 8 | Recovery phrase screen (blur/dummy words!) | **Your keys, your data — 12 words** |
+| 3 | List with price badges visible (seed via a flyer scan first) | **Flyer prices, right on your list** |
+| 4 | Trip Plan sheet open: a 2-stop split with per-store subtotals and the "💰 You save" row (requires a Plus-entitled build; savings row states the one-stop comparison honestly) | **Costco + No Frills: see what the split saves you** |
+| 5 | FlyerScanFlow result: "14 prices captured from [store]" — capture via the photo-library path; the in-app camera path is broken (`00-README.md`), so do NOT storyboard around live camera UI until it's fixed | **Add a flyer photo, get the prices** |
+| 6 | Home first-run recovery banner or RecoveryScreen (blur/dummy words!) | **Your keys, your data — 12 words** |
+| 7 | PrivacyScreen ("How Your Data Is Handled" card) | **Encrypted end-to-end. No account. No ads.** |
+| 8 | Pairing QR screen (with dummy QR) | **Invite family with one QR code** |
+| 9 | List in airplane mode with the sync indicator showing offline + items still editable | **Works fully offline** |
+
+(Play caps phone screenshots at 8 — drop #9 there or fold the offline claim
+into #1's caption; Apple takes all 9.)
 
 Seed data for shots: use a plausible weekly list (milk, eggs, bread, chicken
 thighs, bananas, coffee…) and CAD prices; set device clock to a clean time,
@@ -174,12 +201,12 @@ inside it (crops badly at small sizes).
 | Time | On screen (real app) | Text overlay |
 |---|---|---|
 | 0–3s | Logo splash → Home | **PantryRun** — the private family grocery list |
-| 3–8s | Type "milk", "eggs", quick-add; check one off (satisfying tick) | Fast lists. Works offline. |
-| 8–13s | Cut: second device — the same items appear | Syncs with your family — **end-to-end encrypted** |
-| 13–18s | Price badges pop in on the list; store totals bar | See local prices while you plan |
-| 18–24s | Trip Plan sheet opens: "2 stops — save $11.40" | Know **which stores** are worth it |
-| 24–28s | Flyer photo → "14 prices captured" | Point at a flyer. Get the deals. |
-| 28–30s | Privacy screen card → end card: icon + name | No account. No ads. **Your data stays home.** |
+| 3–9s | Type "milk", "eggs", quick-add; check one off (satisfying tick) | Fast lists. Works offline. |
+| 9–15s | Cut: second device — the same items appear | Syncs with your family — **end-to-end encrypted** |
+| 15–18s | Flyer photo added from library → "14 prices captured" — uses the photo-library path; if the camera bug isn't fixed by capture day, keep the camera UI out of frame entirely | Add a flyer. Get the prices. |
+| 18–24s | Trip Plan sheet opens: 2-stop split, per-store subtotals, "💰 You save $11.40" row (Plus-entitled build; figure is the honest one-stop comparison) | **Split the trip. Keep the savings.** |
+| 24–27s | Recovery phrase screen (dummy words), quick beat | Your keys. Your data. 12 words. |
+| 27–30s | Privacy screen card → end card: icon + name | No account. No ads. **Your data stays home.** |
 
 Production notes: record at 60fps, trim taps to feel instant (cut dead time),
 end card is the only non-screen frame Apple tolerates (~1s, static). One

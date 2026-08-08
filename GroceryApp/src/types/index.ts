@@ -191,6 +191,13 @@ export interface AppSettings {
   contributeStoreGranularity?: 'region' | 'branch';
   /** Whether the consent modal has been shown to the user */
   contributeConsentShown?: boolean;
+  /**
+   * Whether the user has explicitly confirmed saving their recovery phrase
+   * ("I've Stored It Safely" on RecoveryScreen). Deliberately NOT set on
+   * dismiss/backgrounding — the first-run backup prompt must re-surface until
+   * the user actually acknowledges, unlike the contributeConsentShown flow.
+   */
+  recoveryPhraseAcknowledged?: boolean;
   /** Separate pool server URL for contribution transport isolation */
   poolUrl?: string;
 

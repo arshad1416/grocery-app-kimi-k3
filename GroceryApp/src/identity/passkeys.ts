@@ -197,9 +197,20 @@ export async function removePasskey(): Promise<void> {
 }
 
 /**
- * Clear all passkey data (for testing).
+ * Clear passkey data: the support flag and the CURRENT device's credential.
+ *
+ * Credentials stored under other/former device ids are unreachable by name —
+ * expo-secure-store has no key-enumeration API. The data-wipe path
+ * (src/services/dataWipe.ts) documents this and destroys the device keypair,
+ * so any such residue is unusable.
  */
 export async function clearPasskeyData(): Promise<void> {
-  // In real app, clear all stored credentials
-  await (await getSecureStore()).deleteItemAsync(PASSKEY_SUPPORT_ALIAS);
+  const ss = await getSecureStore();
+  await ss.deleteItemAsync(PASSKEY_SUPPORT_ALIAS);
+  try {
+    const deviceId = getDeviceId();
+    await ss.deleteItemAsync(`${PASSKEY_CREDENTIAL_ALIAS_PREFIX}${deviceId}`);
+  } catch {
+    // Device identity not initialized — no addressable credential.
+  }
 }

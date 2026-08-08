@@ -44,6 +44,7 @@ import BarcodeScannerScreen from '../components/BarcodeScannerScreen';
 import { lookupProduct, submitNewProduct } from '../services/productLookup';
 import { fetchDealsForFSA, type FlippDealRow } from '../services/dealMatcher';
 import { getSettings } from '../config/settings';
+import { ensureBarcodeLookupConsent } from '../services/barcodeConsent';
 import { isTursoReady } from '../services/tursoClient';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
@@ -68,6 +69,7 @@ export default function HomeScreen({ navigation }: Props) {
   const members = useFamilyStore((s) => s.members);
 
   const syncState = useSyncStore((s) => s.syncState);
+  const syncError = useSyncStore((s) => s.error);
 
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -158,6 +160,30 @@ export default function HomeScreen({ navigation }: Props) {
       abortedRef.current = true;
     };
   }, [doLoadLists]);
+
+  // First-run recovery backup prompt. Shown until the user explicitly taps
+  // "I've Stored It Safely" on RecoveryScreen — dismissing the screen or
+  // backgrounding never sets the flag, so the banner re-surfaces every visit
+  // (deliberately unlike the contributeConsentShown modal, whose dismiss
+  // handlers suppress it forever).
+  const [showRecoveryPrompt, setShowRecoveryPrompt] = useState(false);
+  useEffect(() => {
+    const refresh = async () => {
+      try {
+        if (getSettings().recoveryPhraseAcknowledged) {
+          setShowRecoveryPrompt(false);
+          return;
+        }
+        // Only prompt when there is actually a stored phrase to show.
+        const { hasRecoveryPhrase } = await import('../identity/recovery');
+        setShowRecoveryPrompt(await hasRecoveryPhrase());
+      } catch {
+        setShowRecoveryPrompt(false);
+      }
+    };
+    refresh();
+    return navigation.addListener('focus', refresh);
+  }, [navigation]);
 
   const handleListPress = useCallback(
     (list: GroceryList) => {
@@ -452,6 +478,17 @@ export default function HomeScreen({ navigation }: Props) {
     if (tab === 'account') {
       navigation.navigate('Settings');
       setActiveTab('home');
+    } else if (tab === 'scan') {
+      // Barcode lookups send the scanned barcode to Open Food Facts — get
+      // consent (persisted as barcodeScanningEnabled) before opening the camera.
+      void ensureBarcodeLookupConsent().then((granted) => {
+        if (!granted) return;
+        setActiveTab('scan');
+        setScanResult(null);
+        setPendingDealToAdd(null);
+        setShowListSelector(false);
+        setShowNewProductForm(false);
+      });
     } else {
       setActiveTab(tab);
       // Reset scan & deals pending state when switching tabs
@@ -822,12 +859,38 @@ export default function HomeScreen({ navigation }: Props) {
                 {syncState === 'syncing'
                   ? 'Syncing...'
                   : syncState === 'error'
-                    ? 'Sync error'
+                    ? syncError || 'Sync error'
                     : syncState === 'offline'
                       ? 'Offline'
                       : 'Connected'}
               </Text>
             </View>
+          )}
+
+          {/* First-run recovery backup prompt — persists until explicitly
+              acknowledged on RecoveryScreen; back/dismiss brings it back. */}
+          {showRecoveryPrompt && (
+            <TouchableOpacity
+              style={[
+                styles.recoveryBanner,
+                { backgroundColor: isDark ? 'rgba(255, 152, 0, 0.12)' : '#FFF8E1' },
+              ]}
+              onPress={() => navigation.navigate('Recovery', { mode: 'show' })}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Back up your recovery phrase. Without it, losing this phone means losing your lists."
+            >
+              <Text style={styles.recoveryBannerIcon}>🔐</Text>
+              <View style={styles.recoveryBannerTextWrap}>
+                <Text style={[styles.recoveryBannerTitle, { color: theme.text }]}>
+                  Back up your recovery phrase
+                </Text>
+                <Text style={[styles.recoveryBannerSubtitle, { color: theme.secondaryText }]}>
+                  Your lists are encrypted. Without the phrase, losing this
+                  phone means losing them — tap to view and save it.
+                </Text>
+              </View>
+            </TouchableOpacity>
           )}
 
           {/* Search bar */}
@@ -1178,6 +1241,32 @@ const styles = StyleSheet.create({
   syncText: {
     fontSize: 11,
     fontWeight: '500',
+  },
+  recoveryBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FF9800',
+    gap: 10,
+  },
+  recoveryBannerIcon: {
+    fontSize: 20,
+  },
+  recoveryBannerTextWrap: {
+    flex: 1,
+  },
+  recoveryBannerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  recoveryBannerSubtitle: {
+    fontSize: 12,
+    lineHeight: 16,
   },
   loadingRow: {
     flex: 1,

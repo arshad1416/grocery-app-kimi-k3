@@ -53,12 +53,29 @@ import GotItHeader from '../components/GotItHeader';
 import StoreTotalBar from '../components/StoreTotalBar';
 import type { StoreTotal } from '../components/StoreTotalBar';
 import { themeColors } from '../components/groceryTheme';
+import {
+  useEntitlementStore,
+  purchasePlus,
+  restorePlus,
+  PLUS_PAYWALL_COPY,
+  PLUS_PRICE_DISPLAY,
+} from '../config/entitlements';
 
 // New Antigravity components
 import SearchBar from '../components/SearchBar';
 import CategoryPill from '../components/CategoryPill';
 import StoreCard from '../components/StoreCard';
 import BottomTabBar, { type TabName } from '../components/BottomTabBar';
+
+/**
+ * Trip Optimizer (StopOptimizer → TripPlanSheet) is the paid tier's hero
+ * feature. It shipped OFF in v1 (fully free, no IAP — Apple 3.1.1 rejects
+ * visible paid features that can't be bought). PantryRun Plus (1.x) turns it
+ * on behind the real entitlement check below: the flag says the feature
+ * exists in this build; `isPlus` (from src/config/entitlements.ts, the ONLY
+ * module that computes entitlement state) says this family paid for it.
+ */
+const TRIP_OPTIMIZER_ENABLED = true;
 
 // Enable LayoutAnimation on Android
 if (
@@ -95,6 +112,37 @@ export default function GroceryListScreen({ route, navigation }: Props) {
   const reorderItem = useGroceryStore((s) => s.reorderItem);
   const claimItem = useGroceryStore((s) => s.claimItem);
   const unclaimItem = useGroceryStore((s) => s.unclaimItem);
+
+  // PantryRun Plus — entitlement state is computed ONLY in
+  // src/config/entitlements.ts; this screen just reads and routes to it.
+  const isPlus = useEntitlementStore((s) => s.isPlus);
+  const handlePlusUpsell = useCallback(() => {
+    Alert.alert('PantryRun Plus', PLUS_PAYWALL_COPY, [
+      {
+        text: `Subscribe • ${PLUS_PRICE_DISPLAY}`,
+        onPress: () => {
+          purchasePlus().then((ok) => {
+            if (!ok) {
+              const err = useEntitlementStore.getState().lastError;
+              if (err) Alert.alert('Purchase failed', err);
+            }
+          });
+        },
+      },
+      {
+        text: 'Restore Purchase',
+        onPress: () => {
+          restorePlus().then((ok) => {
+            if (!ok) {
+              const err = useEntitlementStore.getState().lastError;
+              if (err) Alert.alert('Restore failed', err);
+            }
+          });
+        },
+      },
+      { text: 'Not Now', style: 'cancel' },
+    ]);
+  }, []);
 
   // Price store
   const prices = usePriceStore((s) => s.prices);
@@ -495,7 +543,7 @@ export default function GroceryListScreen({ route, navigation }: Props) {
     }
     Alert.alert(
       'Turn on price lookups to scan flyers?',
-      'Flyer scanning reads prices into your local price list. Normalized, hashed item names are sent to price sources to fetch prices — your actual item names and shopping habits are never sent. You can turn this off anytime in Settings.',
+      'Flyer scanning reads prices from your photo into your local price list. The photo (with location metadata removed) is sent to your own relay server for extraction and then discarded — your item names and shopping habits never leave this device. You can turn this off anytime in Settings.',
       [
         { text: 'Not now', style: 'cancel' },
         {
@@ -1015,24 +1063,41 @@ export default function GroceryListScreen({ route, navigation }: Props) {
             </ScrollView>
           </View>
 
-          {/* Stop optimizer */}
-          <StopOptimizer
-            items={filteredUncheckedItems}
-            perStorePrices={perStorePrices}
-            storeNameMap={storeNameMap}
-            selectedRouteNumStops={selectedRouteNumStops}
-            onSelectRouteNumStops={(numStops) => {
-              setSelectedRouteNumStops(numStops);
-              setSelectedStoreId(null);
-            }}
-            fullItems={filteredUncheckedItems.map((item) => ({
-              id: item.id,
-              name: item.name,
-              quantity: item.quantity,
-              unit: item.unit,
-            }))}
-          />
+          {/* Trip Optimizer — PantryRun Plus. The render gate is the flag
+              (feature exists in this build) AND the entitlement (family
+              paid), computed solely by src/config/entitlements.ts. */}
+          {TRIP_OPTIMIZER_ENABLED && isPlus && (
+            <StopOptimizer
+              items={filteredUncheckedItems}
+              perStorePrices={perStorePrices}
+              storeNameMap={storeNameMap}
+              selectedRouteNumStops={selectedRouteNumStops}
+              onSelectRouteNumStops={(numStops) => {
+                setSelectedRouteNumStops(numStops);
+                setSelectedStoreId(null);
+              }}
+              fullItems={filteredUncheckedItems.map((item) => ({
+                id: item.id,
+                name: item.name,
+                quantity: item.quantity,
+                unit: item.unit,
+              }))}
+            />
+          )}
 
+          {/* PantryRun Plus upsell — shown where the Trip Optimizer would be */}
+          {TRIP_OPTIMIZER_ENABLED && !isPlus && (
+            <TouchableOpacity
+              style={[styles.findPricesBtn, { backgroundColor: isDark ? 'rgba(255, 193, 7, 0.10)' : 'rgba(255, 179, 0, 0.12)' }]}
+              onPress={handlePlusUpsell}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="lock-closed" size={14} color={isDark ? '#FFC107' : '#B28704'} />
+              <Text style={[styles.findPricesText, { color: isDark ? '#FFC107' : '#B28704' }]}>
+                Trip Optimizer — unlock with PantryRun Plus ({PLUS_PRICE_DISPLAY})
+              </Text>
+            </TouchableOpacity>
+          )}
           {/* Find Prices button */}
           {!priceLoading && (
             <TouchableOpacity

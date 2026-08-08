@@ -26,7 +26,7 @@ app ownership.
 Before deploying:
 
 1. Replace `TEAMID` with your Apple Team ID (found in [Apple Developer Portal](https://developer.apple.com/account))
-2. Replace `com.groceryapp.app` with your actual bundle identifier if different
+2. Replace `com.shiftlogichq.pantryrun` with your actual bundle identifier if different
 3. Serve the file with `Content-Type: application/json` and no redirects
 
 **Content:**
@@ -37,7 +37,7 @@ Before deploying:
     "apps": [],
     "details": [
       {
-        "appID": "TEAMID.com.groceryapp.app",
+        "appID": "TEAMID.com.shiftlogichq.pantryrun",
         "paths": ["/invite/*"]
       }
     ]
@@ -53,7 +53,7 @@ Before deploying:
 
 Before deploying:
 
-1. Replace `com.groceryapp.app` with your actual Android package name if different
+1. Replace `com.shiftlogichq.pantryrun` with your actual Android package name if different
 2. Replace `REPLACE_WITH_RELEASE_CERT_FINGERPRINT` with your app's SHA-256 release certificate
    fingerprint. You can generate this with:
    ```bash
@@ -88,7 +88,7 @@ If using Expo, configure in `app.json`:
   "expo": {
     "ios": {
       "associatedDomains": ["applinks:groceryapp.app"],
-      "bundleIdentifier": "com.groceryapp.app"
+      "bundleIdentifier": "com.shiftlogichq.pantryrun"
     }
   }
 }
@@ -130,7 +130,7 @@ In `AndroidManifest.xml`, add intent filters for both the custom scheme and app 
 {
   "expo": {
     "android": {
-      "package": "com.groceryapp.app",
+      "package": "com.shiftlogichq.pantryrun",
       "intentFilters": [
         {
           "action": "VIEW",

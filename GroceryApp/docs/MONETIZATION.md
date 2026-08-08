@@ -59,10 +59,14 @@ disclosure (3) is non-negotiable even though the relay custody (fixed) no
 longer is.
 
 ### Trip Optimizer specifically
-- Currently free and fully client-side — gating it is purely an entitlement
-  check in `GroceryListScreen`/`StopOptimizer` render paths.
-- If v1 users have already used it free, consider grandfathering to avoid
-  review-time "feature removal" complaints and bad reviews.
+- Fully client-side — gating it is purely an entitlement check in the
+  `GroceryListScreen` render path (now implemented:
+  `src/config/entitlements.ts` is the single entitlement module).
+- No grandfathering is needed and none should be built: the owner gated the
+  feature OFF before v1 shipped (`TRIP_OPTIMIZER_ENABLED = false` in the v1
+  binary), precisely so no user ever had it free. The pre-paywall cohort is
+  empty — do not add exemption logic for an empty set. (This corrects
+  earlier guidance written before the v1 gating decision.)
 
 ### Store paperwork when this lands
 - Add subscription products + `NSPrivacyCollectedDataTypes` review (purchase

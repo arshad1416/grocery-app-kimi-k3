@@ -1,28 +1,32 @@
 /**
  * Price Subsystem — Privacy Hashing.
  *
- * Provides privacy-preserving item name hashing for external adapters.
- * Local adapters (crowdsourced, flyer-scan) use plaintext normalized names.
- * External adapters (instacart, scraping, cloud-flyer) receive SHA-256 hashes.
+ * Provides item-name obfuscation for external adapters. Local adapters
+ * (crowdsourced, flyer-scan) use plaintext normalized names.
  *
- * Hashing uses react-native-libsodium (already a dependency) to avoid
- * adding new npm packages.
+ * HONESTY NOTE (do not overstate this in user-facing copy): hashItemName()
+ * is NOT a cryptographic hash. It is a 48-bit FNV-1a-style digest, and the
+ * grocery vocabulary is small enough that anyone can precompute the digest
+ * of every common item name and reverse it. It prevents casual logging of
+ * plaintext, nothing more. In v1 every adapter that would receive these
+ * digests is dead code (instacart/scraping are stubs; cloud-flyer sends no
+ * item names), so nothing hashed here leaves the device.
  */
 
 // ─── Hashing ────────────────────────────────────────────────────────────────
 
 /**
- * Normalize and hash an item name for external lookups.
- * Returns first 12 hex chars of SHA-256 for lookup key matching.
+ * Normalize and obfuscate an item name for external lookups.
+ * Returns the first 12 hex chars (48 bits) of a non-cryptographic
+ * FNV-1a-style digest — see the honesty note above. If a future adapter
+ * actually transmits these, replace with a real cryptographic hash
+ * (e.g. the pure-TS SHA-256 in src/identity/recovery.ts) first.
  *
  * Only used for external (non-local) adapters.
  * Local adapters (crowdsourced, flyer-scan) use plaintext normalized names.
  */
 export function hashItemName(name: string): string {
   const normalized = normalizeForLookup(name);
-  // Use a simple synchronous SHA-256 via the Web Crypto–compatible approach.
-  // In React Native, we use a deterministic string hash as a stand-in.
-  // For production, this would use libsodium.crypto_hash_sha256.
   return fnv1aHashHex(normalized).slice(0, 12);
 }
 
@@ -61,13 +65,14 @@ export function privacySanitize(
 
 /**
  * Synchronous SHA-256 producing a hex string.
- * Uses a pure-JS FNV-1a-like hash for deterministic privacy hashing.
+ * Uses a pure-JS FNV-1a-like hash for deterministic obfuscation.
  * This is NOT cryptographically secure — it's a privacy obfuscation layer,
  * not a security primitive. The goal is to avoid sending plaintext item
  * names to external adapters.
  *
- * For true SHA-256, use libsodium.crypto_hash_sha256 (async).
- * This sync version is used in the adapter hot path where async is costly.
+ * For a real cryptographic hash, use the pure-TS SHA-256 in
+ * src/identity/recovery.ts (libsodium's crypto_hash_sha256 is NOT exposed
+ * by react-native-libsodium at runtime — see GOAL_PROMPT_NOTES.md, Goal 5).
  */
 function fnv1aHashHex(input: string): string {
   // FNV-1a 32-bit × 4 rounds to get 128 bits → 32 hex chars

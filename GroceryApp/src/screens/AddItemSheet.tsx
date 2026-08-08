@@ -31,6 +31,7 @@ import type { ParsedItem } from '../voice/types';
 import { useActiveTheme } from '../state/useThemeStore';
 import BarcodeScannerScreen from '../components/BarcodeScannerScreen';
 import { lookupProduct, submitNewProduct } from '../services/productLookup';
+import { ensureBarcodeLookupConsent } from '../services/barcodeConsent';
 import type { ProductInfo, ScanResult } from '../types/product';
 
 // ─── Props ──────────────────────────────────────────────────────────────────
@@ -369,13 +370,18 @@ export default function AddItemSheet({
   );
 
   /**
-   * Open barcode scanner UI.
+   * Open barcode scanner UI. Barcode lookups send the scanned barcode to
+   * Open Food Facts, so the consent prompt (persisted as
+   * barcodeScanningEnabled) runs before the camera opens.
    */
   const openScanner = useCallback(() => {
-    setScanMode(true);
-    setScanResult(null);
-    setScanError(null);
-    setShowNewProductForm(false);
+    void ensureBarcodeLookupConsent().then((granted) => {
+      if (!granted) return;
+      setScanMode(true);
+      setScanResult(null);
+      setScanError(null);
+      setShowNewProductForm(false);
+    });
   }, []);
 
   /**

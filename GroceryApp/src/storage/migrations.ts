@@ -82,5 +82,26 @@ export const migrations = schemaMigrations({
         }),
       ],
     },
+    // v5 → v6: Add entitlements table so the PantryRun Plus entitlement
+    // survives app restart (Yjs document state is never persisted; the
+    // CRDT syncs the record between devices, this table keeps it locally)
+    {
+      toVersion: 6,
+      steps: [
+        createTable({
+          name: 'entitlements',
+          columns: [
+            { name: 'family_id', type: 'string' },
+            { name: 'product_id', type: 'string' },
+            { name: 'platform', type: 'string' },
+            { name: 'transaction_id', type: 'string' },
+            { name: 'purchased_at', type: 'number' },
+            { name: 'expires_at', type: 'number', isOptional: true },
+            { name: 'source', type: 'string' },
+            { name: 'updated_at', type: 'number' },
+          ],
+        }),
+      ],
+    },
   ],
 });

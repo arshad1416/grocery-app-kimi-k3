@@ -49,6 +49,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   contributeEnabled: false,
   contributeStoreGranularity: 'region',
   contributeConsentShown: false,
+  recoveryPhraseAcknowledged: false,
   poolUrl: '',
   theme: 'system',
 };

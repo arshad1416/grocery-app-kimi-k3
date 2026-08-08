@@ -132,6 +132,12 @@ export class Database {
       writerDepth -= 1;
     }
   }
+
+  /** Mirrors the real API: must be called from inside a Writer. */
+  async unsafeResetDatabase(): Promise<void> {
+    ensureInWriter('Database.unsafeResetDatabase()');
+    tables.clear();
+  }
 }
 
 export const Q = {

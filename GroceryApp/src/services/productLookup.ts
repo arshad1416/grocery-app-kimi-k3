@@ -11,6 +11,7 @@
 import { getCachedProduct, setCachedProduct } from './productCache';
 import { getTurso, isTursoReady } from './tursoClient';
 import { cleanProductName } from './aiCleanup';
+import { getSettings } from '../config/settings';
 import type { ProductInfo, CleanedProduct, NewProductSubmission, ScanResult } from '../types/product';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -116,6 +117,17 @@ async function lookupTurso(barcode: string): Promise<ProductInfo | null> {
  * Results are cached in-memory regardless of source.
  */
 export async function lookupProduct(barcode: string): Promise<ScanResult> {
+  // Consent gate: barcode lookups are opt-in (barcodeScanningEnabled, default
+  // false). The scanner entry points ask for consent before the camera opens,
+  // so this is defence-in-depth — no caller can reach the network without it.
+  if (!(getSettings().barcodeScanningEnabled ?? false)) {
+    return {
+      status: 'lookup_error',
+      barcode,
+      error: 'Barcode lookups are turned off. Enable barcode scanning in Settings to look up products.',
+    };
+  }
+
   // 1. In-memory cache
   const cached = getCachedProduct(barcode);
   if (cached) return { status: 'found', product: cached };
