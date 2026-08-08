@@ -10,7 +10,9 @@
  *  - AAD (Additional Authenticated Data) binds each ciphertext to its field context,
  *    supported natively by libsodium's AEAD interface
  *  - UUID v4 generated via libsodium's randombytes_buf for crypto-safe randomness
- *  - Constant-time passphrase verification via sodium_memcmp
+ *  - Constant-time passphrase verification via a hand-rolled length-guarded XOR
+ *    compare (`constantTimeEqual`), NOT sodium_memcmp — react-native-libsodium's
+ *    native surface does not export memcmp
  */
 
 import type { EncryptedData } from '../types';
@@ -292,10 +294,32 @@ export async function getMasterKey(): Promise<Uint8Array | null> {
 }
 
 /**
- * Derive master key from passphrase and verify against stored key.
- * Uses libsodium's sodium_memcmp for constant-time comparison.
+ * Derive a master key from a passphrase and return it ONLY if the passphrase
+ * verifies against the stored key. Comparison is constant-time.
  *
- * @returns The derived key if passphrase is correct, null otherwise.
+ * Fail-closed by construction: every path that cannot complete the comparison
+ * returns null. It must never return key material it has not verified, because
+ * the name makes it the obvious thing to reach for when gating access — see the
+ * fail-open this replaced (audit L5).
+ *
+ * That fail-open returned the stored key outright whenever the envelope was
+ * tagged `type: 'recovery'`, on the reasoning that a recovery-minted key has no
+ * passphrase to check. The reasoning was right and the conclusion was backwards:
+ * with no passphrase to check, a passphrase check cannot succeed.
+ *
+ * Which devices actually rested in that state, precisely: `setMasterKey` writes
+ * `'recovery'` on every key it stores, but first-run provisioning immediately
+ * re-tags to `'device'` (`sync/bootstrap.ts:43`), so a fresh install never sat
+ * on the vulnerable branch. The exposed population was devices restored from a
+ * family recovery phrase (`identity/recovery.ts`), which are never re-tagged.
+ *
+ * A key with no salt is not a wrong passphrase, it is a device that has no
+ * passphrase at all. Callers that need to tell those apart — to offer recovery
+ * instead of re-prompting — ask `getMasterKeyType()`; distinguishing them here
+ * would mean handing back a key on a path that verified nothing.
+ *
+ * @returns The verified key, or null if the passphrase is wrong, no key is
+ *          stored, or the stored key is not passphrase-derived.
  */
 export async function verifyAndGetMasterKey(
   passphrase: string,
@@ -305,14 +329,11 @@ export async function verifyAndGetMasterKey(
   if (!stored) return null;
   const parsed = JSON.parse(stored);
 
-  // If the stored key was created via recovery (not passphrase), return it directly
-  if (parsed.type === 'recovery') {
-    return base64ToUint8Array(parsed.key);
-  }
-
-  // Legacy format (no type field) or passphrase-derived: re-derive and verify
+  // No salt ⇒ not passphrase-derived (recovery-minted, device-provisioned, or
+  // the legacy untagged format) ⇒ nothing to verify against ⇒ refuse.
   const saltBase64 = parsed.salt;
-  if (!saltBase64) return null; // Missing salt — can't verify
+  if (!saltBase64) return null;
+
   const salt = base64ToUint8Array(saltBase64);
   const derivedKey = await deriveKeyFromPassphrase(passphrase, salt);
   const storedKey = base64ToUint8Array(parsed.key);
@@ -335,11 +356,47 @@ export async function hasMasterKey(): Promise<boolean> {
 /**
  * Derive a sub-key for Yjs sync updates from the master key using libsodium's KDF.
  *
- * This ensures key separation: the master key is used for encrypting stored data,
- * while a derived sub-key is used for encrypting Yjs sync updates over the wire.
- * Compromise of one does not compromise the other.
+ * ⚠️ NOT WIRED UP. Read this before believing the app has key separation
+ * (audit L4). This function is correct and tested, and **nothing calls it**:
+ * `src/sync/bootstrap.ts` passes the master key itself as `encryptionKey`, so
+ * the wire is encrypted under the root key. The previous version of this
+ * comment asserted separation in the present tense, which made a security
+ * property look shipped when only its helper was.
  *
- * Uses crypto_kdf_derive_from_key with a fixed context string 'yjs-sync '.
+ * What that costs today: the Yjs wire and locally stored data share one key,
+ * so there is no compartment boundary between them. In the current design
+ * nothing meaningfully leaks from it — the sub-key would be derived on-device
+ * from a master key held in the same process — so it is defence in depth
+ * rather than a live hole.
+ *
+ * Where it does matter, and why it is still deferred: voice-assistant linking
+ * (`encryptMasterKeyWithAssistantPublicKey`) uploads the *root* master key to
+ * the webhook, where a sync sub-key would be the least-privilege thing to send.
+ * That path is default-off and its webhook is undeployed;
+ * `docs/MONETIZATION.md` §2 and `docs/ARCHITECTURE-VOICE-ASSISTANTS.md` both
+ * record this as required work before the feature can ship.
+ *
+ * Wiring it is a re-key, not a config change, and doing it naively loses user
+ * data. `EncryptedData` ({ciphertext, iv, tag}) carries no version field, and
+ * v1.31 is live in closed testing.
+ *
+ * The blast radius is wider than the wire, which is the part that makes the
+ * one-line version of this change dangerous. `SyncManager` holds a SINGLE
+ * `encryptionKey` field (`sync/sync-manager.ts:46`), set from this value at
+ * `:57`, and it serves three corpora: the Yjs wire, local WatermelonDB field
+ * ciphertext (`:295-299` → `storage/hydrate.ts`), and notification payloads
+ * (`:220`). So changing what `bootstrap.ts` passes re-keys the local database
+ * too, not just relay-held updates and the `offline_queue` rows. Every one of
+ * those becomes undecryptable, and any family member on an older build
+ * silently stops syncing.
+ *
+ * Doing it safely means: split that one field into wire-key and at-rest-key,
+ * version the envelope, decrypt with a master-key fallback for a deprecation
+ * window, then drop the fallback. `__tests__/key-separation.test.ts` is a
+ * source-text heuristic over this comment and `bootstrap.ts` — it catches the
+ * obvious drift in both directions, not every possible refactor.
+ *
+ * Uses crypto_kdf_derive_from_key with the 8-byte context string 'yjs-sync'.
  *
  * @param masterKey - The 256-bit master encryption key.
  * @param subKeyIndex - Optional sub-key index (default: 0). Use different indices
@@ -385,7 +442,13 @@ export async function deriveDBKey(
   return sodium.crypto_kdf_derive_from_key(
     KEY_LENGTH_BYTES,
     2, // distinct subkey ID from sync key (0) and future keys
-    'db-encr',
+    // Exactly crypto_kdf_CONTEXTBYTES (8), padded. This read 'db-encr' — seven
+    // bytes — so every call threw `invalid ctx length`. Nothing called it, so
+    // nothing broke, but the docstring below claimed the derivation was already
+    // in place and tested when it could not run at all. Changing the context
+    // changes the derived key; that is safe only because no data has ever been
+    // encrypted under it. It will not be safe once SQLCipher ships.
+    'db-encr ',
     masterKey,
   );
 }

@@ -61,7 +61,30 @@ export async function encryptField(
 
 /**
  * Decrypt a single field value that was encrypted with context-bound AAD.
- * Returns the plaintext string, or the original value if it wasn't encrypted.
+ *
+ * Two failures are possible here and they are NOT the same thing:
+ *
+ *   "this was never an envelope" — a legacy row written before field
+ *     encryption existed. Correct response: hand the value back unchanged.
+ *   "this IS an envelope and it would not authenticate" — wrong key, or
+ *     corrupted/tampered ciphertext. Correct response: withhold it.
+ *
+ * They used to share one try/catch, with `decrypt()` inside the block whose
+ * catch is commented "Not encrypted". So an AEAD authentication failure fell
+ * through to `return stored` and the caller received the envelope JSON
+ * (`{"ciphertext":…,"iv":…,"tag":…}`) as though it were the user's own text.
+ * That is worse than a crash twice over: the grocery item renders as raw JSON,
+ * and the integrity guarantee the Poly1305 tag exists to provide is discarded
+ * at exactly the moment it fired. Write-through would then re-encrypt that
+ * envelope-as-plaintext on the next edit, cementing the loss.
+ *
+ * On an authentication failure the field is withheld (null) rather than thrown:
+ * every caller is on the hydration path, so throwing would stop the whole list
+ * from loading over one bad row. Null degrades that row and keeps the app usable,
+ * and the failure is logged loudly rather than disguised as plaintext.
+ *
+ * @returns The plaintext, the original value when it was never encrypted, or
+ *          null when an envelope failed to authenticate.
  */
 export async function decryptField(
   stored: string | null | undefined,
@@ -69,16 +92,31 @@ export async function decryptField(
   context: string,
 ): Promise<string | null> {
   if (!stored) return null;
+
+  let parsed: EncryptedData | null = null;
   try {
-    const parsed: EncryptedData = JSON.parse(stored);
-    // Check if it looks like an EncryptedData envelope
-    if (parsed.ciphertext && parsed.iv && parsed.tag) {
-      return await decrypt(parsed, key, context);
-    }
+    parsed = JSON.parse(stored) as EncryptedData;
   } catch {
-    // Not encrypted — return as-is (plaintext)
+    return stored; // Not JSON at all — a legacy plaintext row.
   }
-  return stored;
+
+  // Parsed, but not one of our envelopes (a number, null, a plain object).
+  if (!parsed?.ciphertext || !parsed?.iv || !parsed?.tag) {
+    return stored;
+  }
+
+  try {
+    return await decrypt(parsed, key, context);
+  } catch (err) {
+    console.error(
+      `[hydrate] AEAD authentication failed for field context "${context}". ` +
+        'This means the wrong key, or corrupted/tampered ciphertext — NOT that ' +
+        'the value was stored in plaintext. Withholding the field rather than ' +
+        'returning the ciphertext envelope as if it were user data.',
+      err,
+    );
+    return null;
+  }
 }
 
 // ─── Write-through: encrypt and persist ───────────────────────────────────────
