@@ -75,6 +75,43 @@ check('M8: committed res/xml matches the plugin constant byte for byte', () => {
   );
 });
 
+// Byte-equality above proves the two agree; it does not prove they are valid.
+// Both were briefly identical AND malformed: an ASCII rule ("------") inside a
+// comment is illegal XML, because a comment may not contain a double hyphen.
+// aapt2 rejects that at build time, long after this check said everything was
+// fine. Parse it here so the gate covers well-formedness, not just agreement.
+check('M8: the network-security config is well-formed XML', () => {
+  const { NETWORK_SECURITY_CONFIG_XML: xml } = require(
+    path.join(root, 'plugins/withNetworkSecurityConfig.js')
+  );
+
+  // No double hyphen inside any comment, and no comment ending in a hyphen.
+  for (const m of xml.matchAll(/<!--([\s\S]*?)-->/g)) {
+    assert.ok(
+      !m[1].includes('--'),
+      `XML comments may not contain "--": ${m[1].slice(0, 80).trim()}…`
+    );
+    assert.ok(!m[1].endsWith('-'), 'an XML comment may not end with a hyphen');
+  }
+
+  // Tags balance. Deliberately not a full parser — Node ships no XML parser and
+  // this file must not take a dependency to check one resource.
+  // Comments are stripped first: this file's own prose mentions <application>,
+  // and counting that as an open tag is how this check first failed itself.
+  const body = xml.replace(/<!--[\s\S]*?-->/g, '').replace(/<\?[\s\S]*?\?>/g, '');
+  const tags = [...body.matchAll(/<(\/?)([a-zA-Z][\w-]*)[^>]*?(\/?)>/g)];
+  const stack = [];
+  for (const [, closing, name, selfClosing] of tags) {
+    if (selfClosing) continue;
+    if (closing) {
+      assert.strictEqual(stack.pop(), name, `mismatched closing tag </${name}>`);
+    } else {
+      stack.push(name);
+    }
+  }
+  assert.strictEqual(stack.length, 0, `unclosed tag(s): ${stack.join(', ')}`);
+});
+
 check('M8: the config plugin produces the committed manifest attribute', () => {
   const withNsc = require(path.join(root, 'plugins/withNetworkSecurityConfig.js'));
   assert.strictEqual(typeof withNsc, 'function');
@@ -149,6 +186,54 @@ check('M7: production builds auto-increment the build number', () => {
     eas.cli.appVersionSource,
     'remote',
     'appVersionSource must be "remote" for autoIncrement to survive CI builds'
+  );
+});
+
+// The last build number actually published to a store. versionCode 31 shipped
+// to Play closed testing on 2026-08-08 (see the v1.31.0 release commit). Bump
+// this ONLY to a number that has genuinely shipped.
+const LAST_SHIPPED_BUILD = 31;
+
+check('M7: the local version seed that EAS initialises "remote" from is intact', () => {
+  // With appVersionSource "remote", EAS seeds its counter from the local config
+  // on the first remote build and auto-increments from there. That is safe here
+  // only because app.json still carries the shipped numbers. Deleting them —
+  // the natural instinct once "remote owns versioning" — makes EAS start from 1,
+  // and Play rejects any versionCode <= 31. The failure lands at submission
+  // time, long after the build looked fine, so pin the seed here.
+  const expo = readJson('app.json').expo;
+  const versionCode = expo.android && expo.android.versionCode;
+  const buildNumber = expo.ios && expo.ios.buildNumber;
+
+  assert.ok(
+    Number.isInteger(versionCode),
+    'app.json expo.android.versionCode is missing — EAS would seed the remote counter at 1'
+  );
+  assert.ok(
+    versionCode >= LAST_SHIPPED_BUILD,
+    `app.json versionCode ${versionCode} is below the shipped ${LAST_SHIPPED_BUILD}; ` +
+      'Play rejects a versionCode that is not strictly greater than the live one'
+  );
+  assert.ok(
+    buildNumber != null && Number(buildNumber) >= LAST_SHIPPED_BUILD,
+    `app.json ios.buildNumber ${buildNumber} is below the shipped ${LAST_SHIPPED_BUILD}`
+  );
+});
+
+pending('M7: the EAS remote version counter has been verified against the live build', () => {
+  // Not checkable from the repo: the counter lives on EAS servers and reading it
+  // needs an authenticated session for owner "shiftlogichq". The seed above makes
+  // a FRESH project initialise correctly; it cannot rule out a stale counter left
+  // by an earlier remote build. One command settles it, before the next release:
+  //
+  //   npx eas-cli build:version:get --platform android
+  //   npx eas-cli build:version:set --platform android   # only if it reads < 31
+  //   npx eas-cli build:version:get --platform ios
+  //
+  // Delete this entry once the counters are confirmed >= LAST_SHIPPED_BUILD.
+  assert.fail(
+    `EAS remote counter unverified. Run \`npx eas-cli build:version:get --platform android\` ` +
+      `and confirm it is >= ${LAST_SHIPPED_BUILD} before the next production build`
   );
 });
 
