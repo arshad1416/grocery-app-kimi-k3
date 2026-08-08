@@ -24,3 +24,7 @@ relay-server/keys/
 .DS_Store
 Thumbs.db
 *.swp
+
+# console login captures + editor workspace — never commit
+GroceryApp/test_screenshots/*-login.png
+.qoder/
