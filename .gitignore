@@ -8,14 +8,51 @@ node_modules/
 node_modules_bak/
 
 # ── Build artifacts (JS bundles carry inlined secrets) ───────────────────────
+# Bundle names are matched as BARE FILENAMES, not pinned paths. The leaked
+# token rode out in a bundle, and `--bundle-output` puts the file wherever the
+# caller asks — a path-pinned rule only covers the one default location and a
+# bundle emitted at the repo root or under GroceryApp/ escapes it entirely.
 GroceryApp/dist-android/
-GroceryApp/android/app/src/main/assets/index.android.bundle
+index.android.bundle
+index.ios.bundle
 *.hbc
 *.jsbundle
+dist/
+.expo/
+web-build/
 
 # ── Local environment (never commit real DSNs/tokens) ────────────────────────
 .env
 .env.local
+.env.production
+.env.*.local
+
+# ── Secrets by file class ────────────────────────────────────────────────────
+# Whole classes of credential-bearing files, ignored by extension so a new one
+# is covered the moment it lands — nothing here should ever reach a commit.
+# Signing material (keystores, provisioning profiles, App Store Connect keys)
+# is provisioned through EAS/CI secrets, never through the tree.
+*.pem
+*.key
+*.keystore
+*.jks
+*.p8
+*.p12
+*.pfx
+*.mobileprovision
+# Exception: the Android *debug* keystore is the well-known public one shipped
+# with the SDK (password "android"). It is already tracked and must stay
+# tracked so debug builds share a signature; it holds no secret.
+!GroceryApp/android/app/debug.keystore
+
+# ── Store submission credentials ─────────────────────────────────────────────
+# eas.json points submit.production.android at
+# ./credentials/play-service-account.json. That file is a Google service-account
+# key with upload rights to the Play listing, and it is JSON — so none of the
+# by-extension rules above would have caught it.
+credentials/
+*play-service-account*.json
+*.p8.json
 
 # ── Keys (generated locally, provisioned via deploy env) ─────────────────────
 relay-server/keys/
@@ -28,3 +65,6 @@ Thumbs.db
 # console login captures + editor workspace — never commit
 GroceryApp/test_screenshots/*-login.png
 .qoder/
+
+# ── Agent/tool scratch ───────────────────────────────────────────────────────
+.impeccable/

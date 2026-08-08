@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext policy for PantryRun (audit M5). This is a PARTIAL fix — the audit's
+  end state is described under "still open" below and needs an owner decision.
+
+  This replaces a bare android:usesCleartextTraffic="true" on <application>. The
+  attribute was a single global switch with no way to say anything about *which*
+  hosts; this file is a reviewable, per-host policy, and it is where the
+  remaining tightening goes.
+
+  CLOSED here, at no functional cost: the app's known public endpoints are pinned
+  to HTTPS, so none of them can be downgraded to plain HTTP.
+
+  STILL OPEN: base-config permits cleartext to every other host, so this does not
+  yet mirror iOS's NSAllowsArbitraryLoads=false. That gap is a *breaking change*
+  to close, not an inexpressible one — the distinction matters, so precisely:
+
+    Expressible as <domain> entries: localhost, 127.0.0.1, 10.0.2.2 (the
+      Android-emulator alias for the host machine), any DNS name the user's
+      router resolves, and the .home.arpa suffix.
+    NOT expressible: an RFC1918 *range*. The grammar has no CIDR, and
+      includeSubdomains matches a DNS *suffix* while the octet that varies in a
+      private IP is the suffix — 192.168.0.0/16 would take 65k entries. This is
+      the one case iOS's NSAllowsLocalNetworking covers for free.
+
+    And a bare LAN IP is what this product documents. docs/self-host-security.md
+    tells users to "connect via LAN IP ... e.g. http://192.168.1.50:8080" and
+    calls it the most secure option; PairingScreen's manual-connection field
+    ships the placeholder ws://192.168.1.100. React Native's WebSocket goes
+    through OkHttp, which consults
+    NetworkSecurityPolicy.isCleartextTrafficPermitted(host), so flipping
+    base-config to "false" silently breaks sync for every self-hoster who
+    followed those docs — on a version already live in closed testing.
+
+  End state, once the owner signs off: base-config cleartextTrafficPermitted="false"
+  plus a permissive domain-config for localhost / 127.0.0.1 / 10.0.2.2 / home.arpa,
+  shipped together with a docs change pointing LAN self-hosters at a hostname their
+  router's DNS resolves, or at wss://. Not ".local" — Android's OkHttp path does
+  not resolve mDNS without NsdManager, so a .local entry would be decorative.
+  plugins/__checks__/release-config.check.js reports that flip as PENDING-OWNER
+  and turns green when it lands.
+-->
+<network-security-config>
+  <!-- Permissive default, solely so a LAN relay at a bare private IP keeps
+       working. Read "STILL OPEN" above before changing this to "false": it is
+       the right end state, but it needs the docs migration in the same change. -->
+  <base-config cleartextTrafficPermitted="true">
+    <trust-anchors>
+      <certificates src="system" />
+    </trust-anchors>
+  </base-config>
+
+  <!-- Public endpoints the app actually calls: HTTPS only, no downgrade. -->
+  <domain-config cleartextTrafficPermitted="false">
+    <!-- Invite / applink host and its subdomains. -->
+    <domain includeSubdomains="true">groceryapp.app</domain>
+    <!-- USDA FoodData Central product lookups. -->
+    <domain includeSubdomains="true">api.nal.usda.gov</domain>
+    <!-- Open Food Facts product lookups. -->
+    <domain includeSubdomains="true">openfoodfacts.org</domain>
+  </domain-config>
+</network-security-config>

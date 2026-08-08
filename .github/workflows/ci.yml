@@ -1,20 +1,74 @@
 # GroceryApp CI/CD
-# Runs on every PR to main and every push to main.
-# Ensures: TypeScript compiles, tests pass, docker builds, relay server linted.
+# Runs on every branch push and every PR.
+# Ensures: no secrets in history, TypeScript compiles, tests pass, docker
+# builds, relay server linted.
 
 name: CI
 
+# Every branch, not just main. Secret scanning that only fires on main is
+# scanning after the credential is already public — work happens on claude/*
+# and feature branches, so the gate has to sit there too.
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
-    branches: [main]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # ─── Secret scanning (full history) ────────────────────────────────────────
+  secrets:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    env:
+      # Pinned so CI and local runs use one identical scanner; bump
+      # deliberately, and re-verify .gitleaks.toml against the new ruleset.
+      GITLEAKS_VERSION: 8.30.1
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # REQUIRED. The default shallow clone gives gitleaks a single commit,
+          # so `gitleaks git` would report clean on a history full of leaked
+          # tokens. A production bundle carried a read-write Turso token into
+          # this repo's history once already — depth 0 is what makes the scan
+          # able to see it.
+          fetch-depth: 0
+
+      # Pinned binary rather than the marketplace action: the action gates
+      # organization use behind a licence key and pulls in its own env
+      # handling. This runs the exact same invocation developers run locally.
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      # `git` (not `dir`) scans every commit, not just the checked-out tree:
+      # a secret that was committed and later deleted still lives in history.
+      - name: Scan full git history for secrets
+        run: |
+          gitleaks git . \
+            --config .gitleaks.toml \
+            --redact \
+            --verbose \
+            --no-banner \
+            --report-format sarif \
+            --report-path gitleaks.sarif
+
+      - name: Upload findings
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-sarif
+          path: gitleaks.sarif
+          if-no-files-found: ignore
+
   # ─── Mobile App (Expo/React Native) ────────────────────────────────────────
   mobile:
     name: Mobile App
@@ -41,6 +95,13 @@ jobs:
 
       - name: Run unit tests
         run: npx jest --ci --coverage --maxWorkers=2
+
+      # Config-tree gate, not a unit test: asserts the release posture the audit
+      # fixed (M5/M7/M8/L11/L12) is still in place. It fails only on regression;
+      # items awaiting a human (real Apple IDs, the Play key) report PENDING and
+      # exit 0, so this does not block CI on credentials CI must never hold.
+      - name: Release config check
+        run: npm run check:release
 
       - name: Check bundle size
         run: |
@@ -98,7 +159,37 @@ jobs:
           file: relay-server/Dockerfile
           platforms: linux/amd64
           push: false
+          load: true
           tags: groceryapp-relay:ci
+
+      # A green `docker build` proves only that the layers assembled. The image
+      # can still die at require() time if the Dockerfile's COPY allowlist
+      # misses a module server.js needs at module scope — that exact defect
+      # shipped undetected in the sibling repo, because its CI also stopped at
+      # "build succeeded". Boot it and make it answer.
+      - name: Smoke test — the built image actually boots and serves /health
+        run: |
+          set -euo pipefail
+          docker run -d --name relay-smoke -p 8080:8080 \
+            -e RELAY_TOKEN=ci-smoke-token \
+            groceryapp-relay:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/health >/dev/null 2>&1; then
+              echo "relay answered /health after ${i}s"
+              docker rm -f relay-smoke
+              exit 0
+            fi
+            if [ -z "$(docker ps -q -f name=relay-smoke)" ]; then
+              echo "::error::relay container exited before serving /health"
+              docker logs relay-smoke || true
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::relay never served /health within 30s"
+          docker logs relay-smoke || true
+          docker rm -f relay-smoke
+          exit 1
 
       - name: Build full compose stack
         run: docker compose build

@@ -1,0 +1,43 @@
+# gitleaks configuration — secret scanning for pantryrun.
+#
+# Context: a production JS bundle once carried a read-write Turso token into
+# git history (see GOAL_PROMPT_NOTES.md, credential-purge goal). The CI
+# `secrets` job scans the FULL history so a rewritten-but-not-purged blob
+# cannot come back unnoticed.
+#
+# ── Allowlists here suppress VALUES, never paths ────────────────────────────
+# gitleaks OR-combines the conditions inside one [[allowlists]] block: a
+# finding is suppressed if it matches `paths` *or* `regexes`. Setting
+# `matchCondition = "AND"` does NOT reliably change that — verified against
+# gitleaks 8.30.1: a block with targetRules + paths + regexes + AND still
+# suppressed a planted `api_key = "Zx8v…"` in the named file even though the
+# regex could not match it. So `paths` in a block is, in practice, a
+# file-wide exemption for the targeted rules. An earlier config elsewhere in
+# this project's history had a bare
+#
+#     paths = ['''^GroceryApp/__tests__/''']
+#
+# which exempted that ENTIRE directory from EVERY rule.
+#
+# Therefore: NEVER use `paths` in an allowlist here. Match the offending
+# literal with `regexes` (which tests the detected secret) and pin
+# `targetRules`. A block written that way suppresses exactly one harmless
+# string and leaves every real secret in the same file reportable.
+#
+# Prove any new block: plant a realistic key in the same file, matched by the
+# same rule you target, and confirm gitleaks still reports it.
+
+[extend]
+# Inherit gitleaks' full default ruleset. Without this the config has zero
+# rules and the scan is silently green forever.
+useDefault = true
+
+[[allowlists]]
+description = "SECURITY.md prose names the crypto stack; 'Ed25519-signed' trips generic-api-key on entropy alone."
+targetRules = ["generic-api-key"]
+regexes = ['''^(?i)(curve25519|ed25519|x25519|xchacha20|chacha20|poly1305|argon2id|blake2b|rsabssa)[-_a-z]*$''']
+
+[[allowlists]]
+description = "AC-17 acceptance test's invite-token fixture — a literal placeholder, not a credential. Also quoted in AUDIT-methodology-and-ground-truth.md."
+targetRules = ["generic-api-key"]
+regexes = ['''^abc123-def456$''']

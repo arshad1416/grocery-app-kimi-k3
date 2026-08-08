@@ -2,7 +2,13 @@
 
 **Status:** Design Document  
 **Last Updated:** 2026-06-15  
-**Depends On:** `ARCHITECTURE-PRICE-LOOKUP.md`, `flippscrape.py`, Turso DB (`pantryrun-arshad1416`)
+**Depends On:** `ARCHITECTURE-PRICE-LOOKUP.md`, `flippscrape.py`, the operator's Turso DB
+(hostname supplied via `PANTRYRUN_TURSO_URL`, never committed)
+
+> **v1 status:** this is a design document for a post-v1 feature. Nothing here
+> ships in v1 — `src/services/tursoClient.ts` has no credential source and
+> `isTursoReady()` is always false (`tursoClient.ts:1-14,197`), so
+> `store-prices-adapter.ts` returns no results.
 
 ---
 
@@ -477,7 +483,10 @@ import time
 from datetime import datetime, timezone
 
 # Turso write support (reuses flippscrape patterns)
-PANTRYRUN_TURSO_URL = "https://pantryrun-arshad1416.aws-us-east-1.turso.io"
+# The database hostname is an operator secret-adjacent value, not a constant:
+# this repository is public, so it is read from the environment rather than
+# published here alongside the token path below.
+PANTRYRUN_TURSO_URL = os.environ.get("PANTRYRUN_TURSO_URL", "")
 
 def _get_turso_token() -> str:
     token_path = os.path.expanduser("~/.hermes/pantryrun_turso_token.txt")

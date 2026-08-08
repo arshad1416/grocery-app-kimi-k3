@@ -5,7 +5,7 @@
 
 services:
   # ──────────────────────────────────────────────
-  # WebSocket Relay — Zero-knowledge Yjs sync
+  # WebSocket Relay — content-blind Yjs sync (ciphertext only; see threat-model.md)
   # ──────────────────────────────────────────────
   relay:
     build:
@@ -66,10 +66,22 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-    # The relay is zero-knowledge (stores only client-side-encrypted ciphertext)
-    # but NOT stateless: it persists enrollment state, Yjs doc state, and
-    # encrypted updates. All state is written under /data (RELAY_DATA_DIR) and
-    # survives restarts and rebuilds via the relay-data volume.
+    # The relay is content-blind (it stores only client-side-encrypted
+    # ciphertext) but it is neither zero-knowledge nor stateless: it also sees
+    # and persists routing metadata — familyId, listId, deviceId, timing, size.
+    # See GroceryApp/docs/threat-model.md. It persists exactly three things, all
+    # under /data (RELAY_DATA_DIR), all surviving restarts and rebuilds via
+    # the relay-data volume:
+    #   relay-state.json            enrollments + spent invite signatures
+    #   used-tokens.json            spent blind-token markers (double-spend guard)
+    #   data/encrypted-updates.json opaque client-encrypted update blobs,
+    #                               written by relay-server/encrypted-store.js
+    # It does NOT persist Yjs document state. The relay never constructs a Y.Doc
+    # — it forwards ciphertext it cannot decrypt, so the CRDT merge happens only
+    # on clients. A doc-store.js that did hold server-side Y.Docs used to sit in
+    # relay-server/; it was unreachable dead code, and materialising a doc there
+    # would have read list contents in plaintext and broken the content-blind
+    # property outright, so it was deleted rather than wired up.
     deploy:
       resources:
         limits:

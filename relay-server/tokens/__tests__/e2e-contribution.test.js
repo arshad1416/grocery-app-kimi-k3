@@ -82,6 +82,11 @@ function parseToken(tokenStr) {
     };
   }
 
+  // Mirrors pool-server.js: reject non-canonical transport encodings.
+  if (tokenBytes.toString('base64') !== encoded) {
+    return { valid: false, error: 'Non-canonical token encoding' };
+  }
+
   const signature = new Uint8Array(tokenBytes.slice(0, 256));
   const nonce = new Uint8Array(tokenBytes.slice(256, 288));
 
@@ -205,8 +210,11 @@ async function createTestEnv() {
           return;
         }
 
-        // Single-use enforcement (replay protection)
-        if (!usedTokensStore.checkAndMark(tokenStr)) {
+        // Single-use enforcement (replay protection).
+        // Mirrors pool-server.js: keyed on the SIGNED nonce, with the
+        // transitional legacy raw-string arm. See the comment there.
+        const nonceKey = Buffer.from(parsed.nonce).toString('hex');
+        if (usedTokensStore.isUsed(tokenStr) || !usedTokensStore.checkAndMark(nonceKey)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Token has already been used' }));
           return;

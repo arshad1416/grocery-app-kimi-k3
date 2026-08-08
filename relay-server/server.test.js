@@ -22,6 +22,12 @@ process.env.ASSISTANT_PUBLIC_KEY = require('crypto').generateKeyPairSync('rsa', 
   publicKeyEncoding: { type: 'spki', format: 'pem' },
   privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
 }).publicKey;
+// /oauth/authorize now refuses any redirect_uri that is not registered on the
+// relay (audit H5 — the unvalidated redirect_uri was an open-redirect). The
+// allowlist is fail-closed: unset means "no client is provisioned", so the
+// suite must register the Alexa callback it drives below, exactly as a real
+// deployment provisions its assistant clients.
+process.env.ASSISTANT_REDIRECT_URIS = 'https://oauth.amazon.com/cb';
 
 const fs = require('fs');
 const path = require('path');
@@ -81,7 +87,12 @@ describe('Voice Assistant E2EE Integration', () => {
     const res = await fetch(authUrl);
     expect(res.status).toBe(200);
     const html = await res.text();
-    const codeMatch = html.match(/class="code">(\d{6})<\/div>/);
+    // Not \d{6}. The pairing code is a bearer credential for an account link,
+    // so audit H5 replaced the 6-digit Math.random() code (19.9 bits, and V8
+    // makes no unpredictability claim) with 8 characters drawn by
+    // crypto.randomInt from a 30-character alphabet — 39.3 bits. The alphabet
+    // omits I/L/O/U/0/1 because a human reads this code aloud.
+    const codeMatch = html.match(/class="code">([ABCDEFGHJKMNPQRSTVWXYZ23456789]{8})<\/div>/);
     expect(codeMatch).not.toBeNull();
     pairingCode = codeMatch[1];
   });

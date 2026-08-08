@@ -17,8 +17,10 @@ import type { ConnectionState } from './y-websocket';
 /**
  * Establish the identity and key material a first launch needs.
  *
- * Nothing can be stored before this runs: `persistListToDB` is a no-op
- * without an encryption key, and the recovery system is keyed by familyId.
+ * Nothing can be stored before this runs: `persistListToDB` now rejects
+ * without an encryption key (it used to return silently, which is how a
+ * missing key lost every write without a signal), and the recovery system is
+ * keyed by familyId.
  * The key is minted through the recovery-phrase path so it is backed up from
  * birth — provisioning a bare random key would leave the user permanently
  * unable to generate a recovery phrase (`generateRecoveryPhrase` refuses to

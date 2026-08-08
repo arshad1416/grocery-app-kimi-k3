@@ -60,11 +60,34 @@ export interface OfflineEntry {
   timestamp: number;
   /** WatermelonDB row id when this entry is also persisted to disk. */
   persistedId?: string | null;
+  /**
+   * Set when the entry was evicted from the in-memory queue. Eviction can win
+   * the race against its own disk write (persistedId is still null, so there
+   * is nothing to delete yet), and the row would then sit on disk forever:
+   * restorePersistedQueue stops at MAX_QUEUE_SIZE before ever reaching it.
+   * persistEntry checks this flag and deletes the row when the write lands.
+   */
+  dropped?: boolean;
 }
 
 // ─── WebSocket Sync Client ───────────────────────────────────────────────────
 
-const MAX_QUEUE_SIZE = 1000;
+export const MAX_QUEUE_SIZE = 1000;
+
+/**
+ * XChaCha20-Poly1305 authentication tag length.
+ *
+ * Hardcoded, not read from sodium. react-native-libsodium's native surface
+ * (lib.native.d.ts) declares crypto_aead_xchacha20poly1305_ietf_NPUBBYTES but
+ * never declares ..._ietf_ABYTES, so on device that constant is undefined:
+ * `length - undefined` is NaN, `slice(0, NaN)` is empty and `slice(NaN)` is the
+ * whole buffer, which shipped every envelope as `ciphertext: ""` with cipher||
+ * tag in `tag` — and loadQueueEntries() then discarded every persisted offline
+ * edit, because base64 of a zero-length array is "". The JS-only surface and
+ * the Jest mock both declare it, so nothing failed in CI.
+ * crypto/index.ts hardcodes the same value for the same reason.
+ */
+const ABYTES = 16;
 
 export class YjsWebSocketClient {
   private config: WebSocketConfig;
@@ -77,6 +100,8 @@ export class YjsWebSocketClient {
   private ready = false;
   private disposed = false;
   private authPending = true; // true until auth_ack received
+  /** Latched when the relay answers sync_request with "unknown message type". */
+  private reconciliationUnsupported = false;
   private _ackTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Callbacks
@@ -88,6 +113,16 @@ export class YjsWebSocketClient {
   onQueueDrained?: () => void;
   /** Called when a notification message is received from the relay */
   onNotification?: (listId: string, payload: EncryptedData, senderDeviceId: string) => void;
+  /**
+   * A peer published its Yjs state vector for `listId` and wants whatever it
+   * is missing. Answer with Y.encodeStateAsUpdate(doc, stateVector).
+   */
+  onSyncRequest?: (listId: string, stateVector: Uint8Array, senderDeviceId: string) => void;
+  /**
+   * The connection is up and the offline queue has been flushed — the moment
+   * to publish our own state vectors and find out what we missed.
+   */
+  onReconnected?: () => void;
 
   constructor(config: WebSocketConfig) {
     this.config = config;
@@ -134,6 +169,13 @@ export class YjsWebSocketClient {
         }
       }
       if (undecryptable.length > 0) {
+        // These are edits the user made that will never reach the family. That
+        // is data loss, so it gets the same user-visible channel as a queue
+        // overflow rather than a console line nobody reads.
+        this.onError?.(new Error(
+          `${undecryptable.length} queued offline update(s) could no longer be decrypted ` +
+          `and were discarded. Those edits were not shared with your family.`,
+        ));
         await deleteQueueEntries(undecryptable);
       }
       if (this.offlineQueue.length > 0) {
@@ -197,6 +239,7 @@ export class YjsWebSocketClient {
           deviceId: this.config.deviceId,
         });
         this.flushOfflineQueue();
+        this.onReconnected?.();
       } else {
         // Production: missing relayToken is a fatal error
         this.onError?.(new Error(
@@ -322,6 +365,31 @@ export class YjsWebSocketClient {
   }
 
   /**
+   * Publish our Yjs state vector for a list so peers can send back exactly
+   * what we are missing. This is the only mechanism by which a dropped update
+   * — queue overflow, an app kill before delivery, relay TTL expiry — is ever
+   * recovered; without it every drop is permanent divergence.
+   *
+   * Best-effort like notifications: if we are offline there is nobody to
+   * answer, and the next connect will publish again.
+   */
+  sendStateVector(listId: string, stateVector: Uint8Array): void {
+    if (this.reconciliationUnsupported) return;
+    if (!this.ready || this.state !== 'connected' || !this.ws) return;
+    try {
+      this.sendMessage({
+        type: 'sync_request',
+        familyId: this.config.familyId,
+        deviceId: this.config.deviceId,
+        listId,
+        payload: this.encryptUpdate(stateVector, listId),
+      });
+    } catch (err) {
+      console.warn('YjsWebSocket: failed to send state vector', err);
+    }
+  }
+
+  /**
    * Flush all queued updates to the relay server.
    */
   private flushOfflineQueue(): void {
@@ -379,6 +447,21 @@ export class YjsWebSocketClient {
           deviceId: this.config.deviceId,
         });
         this.flushOfflineQueue();
+        this.onReconnected?.();
+        break;
+      }
+      case 'sync_request': {
+        // A peer told us where it is up to. The state vector is encrypted
+        // under the family key with the same envelope as an update, so the
+        // relay learns nothing beyond "someone reconciled this list".
+        if (data.listId && data.payload) {
+          try {
+            const stateVector = this.decryptUpdate(data.payload, data.listId);
+            this.onSyncRequest?.(data.listId, stateVector, data.deviceId ?? '');
+          } catch (err) {
+            console.warn('YjsWebSocket: failed to decrypt sync_request', err);
+          }
+        }
         break;
       }
       case 'update': {
@@ -399,7 +482,21 @@ export class YjsWebSocketClient {
         break;
       }
       case 'error': {
-        this.onError?.(new Error(data.message ?? 'Relay server error'));
+        const message = data.message ?? 'Relay server error';
+        // A relay that predates reconciliation answers sync_request from its
+        // `default:` branch. That is a version skew, not a user-facing fault:
+        // surfacing it would put a red sync error on screen after every
+        // reconnect. Latch it so we ask once per process instead of once per
+        // list per reconnect. Reconciliation simply does not happen until the
+        // relay is upgraded; everything else on the connection is unaffected.
+        if (/Unknown message type:\s*sync_request/i.test(message)) {
+          if (!this.reconciliationUnsupported) {
+            this.reconciliationUnsupported = true;
+            console.warn('YjsWebSocket: relay does not support reconciliation yet — disabled');
+          }
+          break;
+        }
+        this.onError?.(new Error(message));
         break;
       }
       default:
@@ -430,9 +527,8 @@ export class YjsWebSocketClient {
       nonce,
       this.encryptKey,
     );
-    const abytes = sodium.crypto_aead_xchacha20poly1305_ietf_ABYTES;
-    const ciphertext = cipherWithTag.slice(0, cipherWithTag.length - abytes);
-    const tag = cipherWithTag.slice(cipherWithTag.length - abytes);
+    const ciphertext = cipherWithTag.slice(0, cipherWithTag.length - ABYTES);
+    const tag = cipherWithTag.slice(cipherWithTag.length - ABYTES);
 
     return {
       ciphertext: sodium.to_base64(ciphertext, sodium.base64_variants.ORIGINAL),
@@ -474,8 +570,9 @@ export class YjsWebSocketClient {
   private enqueueOffline(update: Uint8Array, listId: string): void {
     if (this.offlineQueue.length >= MAX_QUEUE_SIZE) {
       const dropped = this.offlineQueue.shift(); // drop oldest
-      if (dropped?.persistedId) {
-        this.deletePersisted([dropped.persistedId]);
+      if (dropped) {
+        dropped.dropped = true; // in case its disk write has not landed yet
+        if (dropped.persistedId) this.deletePersisted([dropped.persistedId]);
       }
       this.onError?.(new Error(
         `Offline queue full (${MAX_QUEUE_SIZE}). Dropped oldest update for list ${dropped?.listId ?? 'unknown'}.`,
@@ -491,22 +588,44 @@ export class YjsWebSocketClient {
   }
 
   /**
-   * Best-effort disk persistence of a queued entry (encrypted wire envelope).
-   * The in-memory queue keeps working even if persistence fails.
+   * Disk persistence of a queued entry (encrypted wire envelope). The
+   * in-memory queue keeps working even if this fails, but the failure is not
+   * cosmetic — an entry that never reaches disk is lost if the app is killed
+   * before it is delivered, which is the exact scenario the queue exists for.
+   * So it is reported rather than swallowed.
    */
   private persistEntry(entry: OfflineEntry): void {
-    if (!this.ready) return; // sodium not ready — cannot encrypt for disk yet
+    if (!this.ready) {
+      this.reportPersistFailure(entry.listId, new Error('libsodium not ready'));
+      return; // cannot encrypt for disk yet
+    }
     try {
       const encrypted = this.encryptUpdate(entry.update, entry.listId);
       import('./offline-queue-store')
         .then(({ saveQueueEntry }) => saveQueueEntry(entry.listId, encrypted, entry.timestamp))
         .then((id) => {
+          // Evicted while the write was in flight — delete rather than track,
+          // or the row outlives the queue that is supposed to own it.
+          if (entry.dropped) {
+            if (id) this.deletePersisted([id]);
+            return;
+          }
           entry.persistedId = id;
+          // saveQueueEntry returns null on a failed write rather than throwing.
+          if (!id) this.reportPersistFailure(entry.listId, new Error('write returned no row id'));
         })
-        .catch(() => {});
-    } catch {
-      // encryption failed — in-memory only
+        .catch((err) => this.reportPersistFailure(entry.listId, err));
+    } catch (err) {
+      this.reportPersistFailure(entry.listId, err);
     }
+  }
+
+  private reportPersistFailure(listId: string, err: unknown): void {
+    console.warn(`YjsWebSocket: failed to persist queued update for list ${listId}`, err);
+    this.onError?.(new Error(
+      `A pending change for list ${listId} could not be saved to disk and will be ` +
+      `lost if the app closes before it syncs.`,
+    ));
   }
 
   /** Best-effort removal of delivered/dropped entries from disk. */
@@ -540,7 +659,7 @@ export class YjsWebSocketClient {
 // ─── Relay Message Types ─────────────────────────────────────────────────────
 
 interface RelayMessage {
-  type: 'auth' | 'auth_ack' | 'identity' | 'update' | 'ack' | 'error' | 'notification';
+  type: 'auth' | 'auth_ack' | 'identity' | 'update' | 'ack' | 'error' | 'notification' | 'sync_request';
   familyId?: string;
   deviceId?: string;
   listId?: string;

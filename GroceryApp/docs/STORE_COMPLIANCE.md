@@ -1,6 +1,12 @@
 # PantryRun — Store Compliance Reference
 
-> **Updated:** July 28, 2026 | **App version:** v1.30.0 | **Package:** `com.shiftlogichq.pantryrun`
+> **Declarations last reviewed:** July 28, 2026, against **v1.30.0**.
+> **Currently shipping:** v1.31.0 / versionCode 31 (`GroceryApp/app.json` →
+> `expo.version` / `expo.android.versionCode`).
+> **Package:** `com.shiftlogichq.pantryrun`
+>
+> The 1.30.0 → 1.31.0 delta has not been re-reviewed against the forms below;
+> re-check §§0–2 before the next submission.
 
 This document contains all declarations needed for Google Play Console and Apple App Store Connect submissions.
 

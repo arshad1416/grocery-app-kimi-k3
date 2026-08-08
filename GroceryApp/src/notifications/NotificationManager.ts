@@ -31,6 +31,18 @@ async function getSodium(): Promise<any> {
   return sodium;
 }
 
+/**
+ * XChaCha20-Poly1305 authentication tag length.
+ *
+ * Hardcoded for the same reason as crypto/index.ts and sync/y-websocket.ts:
+ * react-native-libsodium's native surface never declares
+ * crypto_aead_xchacha20poly1305_ietf_ABYTES, so reading it gives undefined on
+ * device and the envelope splits at NaN — ciphertext comes out empty with
+ * cipher||tag in the tag field. The encrypt/decrypt pair here re-concatenates,
+ * so nothing broke visibly, but the envelope was mislabelled on every phone.
+ */
+const ABYTES = 16;
+
 // ─── Notification Channel (Android) ──────────────────────────────────────────
 
 const NOTIFICATION_CHANNEL_ID = 'pantryrun-family';
@@ -251,11 +263,10 @@ async function encryptNotificationPayload(
   const cipherWithTag = s.crypto_aead_xchacha20poly1305_ietf_encrypt(
     plaintext, additionalData, null, nonce, key,
   );
-  const abytes = s.crypto_aead_xchacha20poly1305_ietf_ABYTES;
   return {
-    ciphertext: s.to_base64(cipherWithTag.slice(0, cipherWithTag.length - abytes), s.base64_variants.ORIGINAL),
+    ciphertext: s.to_base64(cipherWithTag.slice(0, cipherWithTag.length - ABYTES), s.base64_variants.ORIGINAL),
     iv: s.to_base64(nonce, s.base64_variants.ORIGINAL),
-    tag: s.to_base64(cipherWithTag.slice(cipherWithTag.length - abytes), s.base64_variants.ORIGINAL),
+    tag: s.to_base64(cipherWithTag.slice(cipherWithTag.length - ABYTES), s.base64_variants.ORIGINAL),
   };
 }
 

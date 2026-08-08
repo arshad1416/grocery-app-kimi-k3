@@ -83,18 +83,26 @@ export async function deleteQueueEntries(ids: Array<string | null | undefined>):
 }
 
 /**
- * Load all persisted queue entries (oldest first). Rows with unparseable
- * payloads are dropped.
+ * Load all persisted queue entries (oldest first).
+ *
+ * A row that cannot yield a complete envelope is unusable forever — nothing
+ * later in the app's life makes an unparseable payload parse. It is therefore
+ * reported and deleted, not skipped: skipping left it on disk to be re-scanned
+ * on every launch while the table grew without bound.
  */
 export async function loadQueueEntries(): Promise<PersistedQueueEntry[]> {
   try {
     const db: any = getDatabase();
     const records = await db.get(TABLE).query().fetch();
     const entries: PersistedQueueEntry[] = [];
+    const unusable: string[] = [];
     for (const record of records as any[]) {
       try {
         const payload = JSON.parse(record.payload) as EncryptedData;
-        if (!payload?.ciphertext || !payload?.iv || !payload?.tag) continue;
+        if (!payload?.ciphertext || !payload?.iv || !payload?.tag) {
+          unusable.push(recordId(record));
+          continue;
+        }
         entries.push({
           id: recordId(record),
           listId: record.listId,
@@ -102,8 +110,15 @@ export async function loadQueueEntries(): Promise<PersistedQueueEntry[]> {
           createdAt: record.createdAt,
         });
       } catch {
-        // corrupt row — skip
+        unusable.push(recordId(record));
       }
+    }
+    if (unusable.length > 0) {
+      console.warn(
+        `[offline-queue] Discarding ${unusable.length} unusable row(s); ` +
+        `those offline edits were never delivered.`,
+      );
+      await deleteQueueEntries(unusable);
     }
     entries.sort((a, b) => a.createdAt - b.createdAt);
     return entries;

@@ -401,13 +401,15 @@ export async function encryptKeyForDevice(
 /**
  * Decrypt a family key that was encrypted with encryptKeyForDevice.
  *
- * Uses libsodium crypto_box_seal_open to decrypt the sealed ciphertext.
- * The recipient's public key is derived from the secret key since
- * crypto_box_seal_open requires both halves of the keypair.
+ * Uses libsodium crypto_box_seal_open, which needs both halves of the
+ * recipient keypair.
  *
  * @param encryptedKey - The encrypted family key ciphertext (without ephemeral pk prefix).
  * @param ephemeralPublicKey - The ephemeral public key from the encryption step.
  * @param deviceSecretKey - The recipient device's secret key (32 bytes).
+ * @param devicePublicKey - The recipient device's public key. Defaults to this
+ *   device's stored key, which is correct whenever the sealed key was addressed
+ *   to this device. Pass it explicitly to decrypt on behalf of another keypair.
  * @returns The decrypted family key as a Uint8Array.
  * @throws If decryption fails (wrong key or corrupted data).
  */
@@ -415,13 +417,25 @@ export async function decryptKeyFromDevice(
   encryptedKey: Uint8Array,
   ephemeralPublicKey: Uint8Array,
   deviceSecretKey: Uint8Array,
+  devicePublicKey?: Uint8Array,
 ): Promise<Uint8Array> {
   await initCrypto();
   const sodium = require('react-native-libsodium');
   await sodium.ready;
 
-  // Derive the public key from the secret key
-  const devicePublicKey = sodium.crypto_scalarmult_base(deviceSecretKey);
+  // NOT sodium.crypto_scalarmult_base(deviceSecretKey). The whole
+  // crypto_scalarmult family is absent from react-native-libsodium's NATIVE
+  // surface — lib/typescript/lib.native.d.ts declares the crypto_box_* members
+  // used below but no crypto_scalarmult* at all, while the JS-only lib.d.ts
+  // declares them at :94. On device that call is undefined and throws. It is
+  // the same "mock is richer than the device library" class as the ABYTES bug
+  // in src/sync/y-websocket.ts, and it hid for the same reason: __mocks__
+  // re-exports libsodium-wrappers, which does have scalarmult, so this path
+  // stayed green in CI while it would have thrown on a real device.
+  //
+  // The public key never needed deriving. This decrypts a key that was sealed
+  // TO this device, so the device's own stored public key is the right one.
+  const recipientPublicKey = devicePublicKey ?? getDeviceKeypair().publicKey;
 
   // Reconstruct the full sealed ciphertext: ephemeral pk + encrypted key
   const sealed = new Uint8Array(
@@ -434,7 +448,7 @@ export async function decryptKeyFromDevice(
   // This uses the recipient's keypair + the embedded ephemeral key
   const decrypted = sodium.crypto_box_seal_open(
     sealed,
-    devicePublicKey,
+    recipientPublicKey,
     deviceSecretKey,
   );
 

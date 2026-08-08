@@ -291,3 +291,70 @@ Report both back — three purchase cases (purchase→relaunch; second family de
 | 11 | Create both subscription products (§5.1) and approve the final price | Products are console-only; price approval is yours |
 | 12 | Create sandbox + license testers (§5.2) and report back | Unblocks the three prepared purchase test cases |
 | 13 | Run `eas build --platform all --profile production` on ≥ 1.31.0 and report the two build IDs | Recorded in GOAL_PROMPT_NOTES.md; the IAP SDK is a native dependency, so store artifacts must be rebuilt |
+
+---
+
+## Owner preconditions added by the 2026-08-08 hardening pass
+
+`cd GroceryApp && npm run check:release` is the machine-checkable version of this
+section. It runs in CI on every push (`.github/workflows/ci.yml`, "Release config
+check"). It fails only on a *regression*; anything needing a human reports
+PENDING and exits 0, so CI never has to hold a credential. As of this commit:
+**16/19 passed, 3 pending owner action, 0 failed.**
+
+### 14 — Initialise the EAS remote version counter BEFORE the next production build
+
+`eas.json` now sets `cli.appVersionSource: "remote"` with `autoIncrement: true`
+on the production profile, which is Expo's documented recommendation from EAS
+CLI 12.0.0.
+
+Per Expo's docs the remote counter is seeded from the local config, and
+`app.json` still carries `android.versionCode: 31` / `ios.buildNumber: "31"`, so
+the first remote build should land on 32. **Confirm rather than assume** — Play
+rejects any versionCode ≤ 31, and 31 is already live in closed testing:
+
+```bash
+cd GroceryApp
+eas build:version:get   --platform android
+eas build:version:set   --platform android   # only if the remote value is < 31
+eas build:version:set   --platform ios       # same check for buildNumber
+```
+
+If `build:version:get` reports nothing or a value below 31, set it to 31 before
+building. Skipping this risks a rejected submission, not a broken build, so it
+fails late and confusingly.
+
+### 15 — Decide the Android cleartext posture (audit M5, deliberately left open)
+
+`android/app/src/main/res/xml/network_security_config.xml` currently pins the
+three public endpoints to HTTPS-only and leaves `base-config` permissive. That is
+a **partial** fix and the check reports it PENDING on purpose.
+
+Closing it fully is a **breaking change, not a config tweak**: Android's grammar
+has no CIDR, and `includeSubdomains` matches a DNS suffix while the octet that
+varies in an RFC1918 address is the suffix — so `192.168.0.0/16` is not
+expressible without ~65k entries. `docs/self-host-security.md` tells self-hosters
+to connect to a bare LAN IP, and React Native's WebSocket goes through OkHttp,
+which consults `NetworkSecurityPolicy.isCleartextTrafficPermitted(host)`. Flipping
+`base-config` to `false` therefore silently breaks sync for every self-hoster who
+followed our own documentation — on a version already in closed testing.
+
+Ship it together with a docs migration pointing LAN self-hosters at either a
+hostname their router resolves or a `wss://` relay. Not `.local`: OkHttp does not
+resolve mDNS without `NsdManager`, so such an entry would be decorative.
+
+### 16 — Provide the two credentials CI cannot hold
+
+- `credentials/play-service-account.json` — the Play upload key. Now covered by
+  `.gitignore` (`credentials/`, `*play-service-account*.json`), verified with
+  `git check-ignore -v`. Provision it locally; never commit it.
+- `eas.json` `submit.production.ios.ascAppId` and `appleTeamId` are still the
+  literal placeholders `REPLACE_WITH_…`. `eas submit --platform ios` fails until
+  they hold real values. These are account facts an agent must not invent.
+
+### 17 — Android submit track
+
+`submit.production.android.track` is `internal`, the most restricted track,
+deliberately chosen over `production`. The app is in **closed testing**, so
+promote through the console once a build is verified rather than letting
+`eas submit --profile production` push straight to the production track.

@@ -78,7 +78,13 @@ describe('AC-16c: Section Content Verification', () => {
     const content = fs.readFileSync(THREAT_MODEL_PATH, 'utf-8');
     expect(content).toContain('Opt-in pricing');
     expect(content).toContain('No analytics');
-    expect(content).toContain('Zero-knowledge relay');
+    // "Content-blind relay", not the former "Zero-knowledge relay". The relay
+    // cannot read list content, but it does see and persist routing metadata
+    // (familyId, listId, deviceId, timing, size), so "zero-knowledge" was an
+    // overclaim in a document whose job is to be honest about exactly this.
+    // Pinning the accurate phrase keeps the doc from drifting back.
+    expect(content).toContain('Content-blind relay');
+    expect(content).not.toContain('Zero-knowledge relay');
   });
 
   it('Known Gaps includes metadata leakage', () => {

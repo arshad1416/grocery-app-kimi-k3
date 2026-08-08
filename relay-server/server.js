@@ -58,8 +58,8 @@ const TOKEN_RATE_LIMIT = parseInt(process.env.TOKEN_RATE_LIMIT || '10', 10);
 const TOKEN_RATE_WINDOW_MS = 3_600_000; // 1 hour
 
 /**
- * Per-device token issuance rate limiters.
- * Map<deviceId, { count: number, windowStart: number }>
+ * Per-enrollment token issuance rate limiters.
+ * Map<relayToken, { count: number, windowStart: number }>
  *
  * NOTE: In-memory only — resets on restart. This is intentional:
  * - The used-tokens store (checkAndMark) prevents replay of issued tokens.
@@ -125,17 +125,18 @@ async function ensureIssuerLoaded() {
 }
 
 /**
- * Check per-device token issuance rate limit.
- * @param {string} deviceId
+ * Check the token issuance rate limit for one enrollment.
+ * @param {string} relayToken - Server-minted enrollment token (audit H11: NOT
+ *   the client-supplied deviceId, which any family member can claim).
  * @returns {boolean} true if allowed
  */
-function checkTokenRateLimit(deviceId) {
+function checkTokenRateLimit(relayToken) {
   const now = Date.now();
-  let limiter = tokenRateLimiters.get(deviceId);
+  let limiter = tokenRateLimiters.get(relayToken);
 
   if (!limiter || now - limiter.windowStart > TOKEN_RATE_WINDOW_MS) {
     limiter = { count: 1, windowStart: now };
-    tokenRateLimiters.set(deviceId, limiter);
+    tokenRateLimiters.set(relayToken, limiter);
     return true;
   }
 
@@ -152,9 +153,9 @@ function checkTokenRateLimit(deviceId) {
  */
 function cleanTokenRateLimiters() {
   const now = Date.now();
-  for (const [deviceId, limiter] of tokenRateLimiters) {
+  for (const [key, limiter] of tokenRateLimiters) {
     if (now - limiter.windowStart > TOKEN_RATE_WINDOW_MS * 2) {
-      tokenRateLimiters.delete(deviceId);
+      tokenRateLimiters.delete(key);
     }
   }
 }
@@ -204,6 +205,28 @@ const STATE_FILE =
  *   public half here (ASSISTANT_PUBLIC_KEY or keys/assistant-public-key.pem),
  *   the private half to the webhook ONLY. Endpoints fail closed if the public
  *   key is not provisioned.
+ *
+ * UNSUPPORTED IN v1.31.0. No shipped client speaks this flow — the app's
+ * `pairingCode` (src/setup/self-host.ts) is the unrelated signed-relay-address
+ * concept, and nothing in the client calls /oauth/authorize or
+ * /api/oauth/pair. The endpoints exist for an assistant webhook that is not
+ * deployed. The account-linking hardening below (CSPRNG codes, constant-time
+ * lookup, session TTL, per-IP and per-code budgets, redirect_uri allowlist) is
+ * therefore defence for an opt-in deploy, not for the default one: leave
+ * ASSISTANT_INTEGRATION unset in production. Turning it on additionally
+ * requires ASSISTANT_REDIRECT_URIS, since an empty allowlist refuses every
+ * link attempt.
+ *
+ * Operator knobs, all optional, all per minute unless noted:
+ *   ASSISTANT_REDIRECT_URIS   required; comma-separated, exact match
+ *   OAUTH_SESSION_TTL_MS      600000  pairing-session lifetime
+ *   OAUTH_AUTHORIZE_LIMIT     15      /oauth/authorize per source IP
+ *   OAUTH_POLL_LIMIT          120     /oauth/status + /api/oauth/pair per IP
+ *   OAUTH_MISS_LIMIT          10      unknown-code lookups per IP (guessing)
+ *   OAUTH_PAIR_MAX_ATTEMPTS   5       submissions per pairing code
+ *   OAUTH_MAX_SESSIONS        1000    live pairing sessions, process-wide
+ * Raise the poll budget if several household members link at once from behind
+ * one NAT; it bounds traffic, not guessing (OAUTH_MISS_LIMIT does that).
  */
 const ASSISTANT_INTEGRATION = process.env.ASSISTANT_INTEGRATION === 'true';
 
@@ -240,16 +263,150 @@ function getAssistantPublicKey() {
 const oauthTokens = new Map();
 
 /**
- * Map<pairingCode, { sessionId: string, redirectUri: string, state: string, scope: string, linked: boolean, familyId: string, encryptedMasterKey: string, authCode: string, createdAt: number }>
+ * Map<pairingCode, { sessionId: string, redirectUri: string, state: string, scope: string, linked: boolean, familyId: string, encryptedMasterKey: string, authCode: string, createdAt: number, attempts: number }>
  */
 const oauthSessions = new Map();
 
+/**
+ * Redirect URIs an assistant vendor is allowed to be sent back to, as an exact
+ * match. Comma-separated in ASSISTANT_REDIRECT_URIS. Empty means "no client is
+ * registered", which fails closed — /oauth/authorize rejects everything, the
+ * same posture as /api/assistant/public-key returning 503 when no key has been
+ * provisioned. Without this the relay stored whatever redirect_uri the query
+ * string carried and later handed it back from /oauth/status with the
+ * authorization code appended: a textbook open redirect that leaks the code.
+ */
+const ASSISTANT_REDIRECT_URIS = (process.env.ASSISTANT_REDIRECT_URIS || '')
+  .split(',')
+  .map((u) => u.trim())
+  .filter(Boolean);
+
+/**
+ * How long an account-linking session stays usable. `createdAt` was already
+ * written but never read, so sessions that never completed an exchange lived
+ * for the life of the process and the guessable-code keyspace only ever grew.
+ */
+const OAUTH_SESSION_TTL_MS = parseInt(process.env.OAUTH_SESSION_TTL_MS || '600000', 10); // 10 min
+
+/** Submissions a single pairing code tolerates before the session is destroyed. */
+const OAUTH_PAIR_MAX_ATTEMPTS = parseInt(process.env.OAUTH_PAIR_MAX_ATTEMPTS || '5', 10);
+
+/**
+ * Per-IP /oauth/status polls per minute. The linking page polls every 1.5s
+ * (~40/min), and a household behind one NAT can have two people linking at
+ * once, so the budget is 3x one client rather than 1.5x — this limit exists to
+ * bound total traffic, not to bound guessing (OAUTH_MISS_LIMIT does that), so
+ * headroom here costs nothing.
+ */
+const OAUTH_POLL_LIMIT = parseInt(process.env.OAUTH_POLL_LIMIT || '120', 10);
+
+/** Per-IP *misses* per minute across /oauth/status and /api/oauth/pair — the guessing budget. */
+const OAUTH_MISS_LIMIT = parseInt(process.env.OAUTH_MISS_LIMIT || '10', 10);
+
+/**
+ * Per-IP GET /oauth/authorize per minute. This is the only unauthenticated
+ * route that ALLOCATES server state (a pairing session), so it needs its own
+ * budget: a human clicks "link account" once. Without it, the session map — and
+ * therefore the constant-time scan in findPairingSession — grows at whatever
+ * rate a single host can issue requests.
+ */
+const OAUTH_AUTHORIZE_LIMIT = parseInt(process.env.OAUTH_AUTHORIZE_LIMIT || '15', 10);
+
+/**
+ * Hard ceiling on live pairing sessions. The per-IP budget above bounds a
+ * single host; this bounds a distributed one, and it is what keeps
+ * findPairingSession's O(n) scan a bounded cost (~0.1 ms at this size) instead
+ * of an attacker-controlled one. A family relay never has more than a handful
+ * of concurrent link attempts, so 1000 is three orders of magnitude of slack.
+ */
+const OAUTH_MAX_SESSIONS = parseInt(process.env.OAUTH_MAX_SESSIONS || '1000', 10);
+
+/**
+ * Pairing-code alphabet: uppercase base32-ish with the characters that get
+ * misread aloud or mistyped removed (0/O, 1/I/L, U). 30^8 ≈ 6.6e11 codes
+ * against the old 10^6, which a single host could walk in minutes.
+ */
+const PAIRING_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+const PAIRING_CODE_LENGTH = 8;
+
+/**
+ * A pairing code is a bearer credential — whoever holds it can complete the
+ * account link — so it comes from the CSPRNG. Math.random() is a seeded,
+ * observable PRNG: recovering its state from a couple of issued codes is a
+ * published attack, and V8 makes no unpredictability claim at all.
+ * crypto.randomInt is rejection-sampled, so no modulo bias across the
+ * 30-character alphabet.
+ */
 function generatePairingCodeString() {
   let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += Math.floor(Math.random() * 10);
+  for (let i = 0; i < PAIRING_CODE_LENGTH; i++) {
+    code += PAIRING_ALPHABET[crypto.randomInt(PAIRING_ALPHABET.length)];
   }
   return code;
+}
+
+/**
+ * Look up a pairing session in constant time with respect to the code.
+ *
+ * A plain `oauthSessions.get(code)` compares strings with an early-exit memcmp
+ * inside a hash bucket, which leaks how much of a guess was correct. This scans
+ * every live session with timingSafeEqual and no early return, so the work is a
+ * function of the session count, not of how close the guess was.
+ *
+ * Length is not secret (the format is fixed and printed on the linking page),
+ * so a wrong-length code short-circuits — and it has to, because
+ * timingSafeEqual throws on mismatched lengths.
+ *
+ * Expired sessions are treated as absent and evicted here, so TTL is enforced
+ * on the read path rather than waiting for the hourly sweep.
+ *
+ * ponytail: known ceiling — this is O(live sessions) per lookup where
+ * `oauthSessions.get()` was O(1), which is only acceptable because
+ * OAUTH_MAX_SESSIONS caps n. Measured, the scan costs ~0.1 ms at n=1000 and
+ * ~2 ms at n=20000; without the cap and the /oauth/authorize budget an
+ * unauthenticated caller would choose n. If the session count ever needs to be
+ * large, drop back to Map.get plus an explicit createdAt check: at a 30^8
+ * CSPRNG keyspace with a 10-misses/min budget, the timing channel this defends
+ * against is theoretical and the amplification is not.
+ *
+ * @param {unknown} submitted - Untrusted pairing code from the request.
+ * @returns {{ code: string, session: object } | null}
+ */
+function findPairingSession(submitted) {
+  if (typeof submitted !== 'string' || Buffer.byteLength(submitted) !== PAIRING_CODE_LENGTH) {
+    return null;
+  }
+  const submittedBuf = Buffer.from(submitted);
+  const now = Date.now();
+  let found = null;
+
+  for (const [code, session] of oauthSessions) {
+    if (Buffer.byteLength(code) !== PAIRING_CODE_LENGTH) continue;
+    const match = crypto.timingSafeEqual(Buffer.from(code), submittedBuf);
+    if (match) found = { code, session }; // no break — constant work per session
+  }
+
+  if (found && now - found.session.createdAt > OAUTH_SESSION_TTL_MS) {
+    oauthSessions.delete(found.code);
+    return null;
+  }
+  return found;
+}
+
+/**
+ * Evict pairing sessions past their TTL. Called from the hourly sweep purely to
+ * bound memory; findPairingSession is what makes expiry security-relevant.
+ */
+function cleanOauthSessions() {
+  const now = Date.now();
+  let removed = 0;
+  for (const [code, session] of oauthSessions) {
+    if (now - session.createdAt > OAUTH_SESSION_TTL_MS) {
+      oauthSessions.delete(code);
+      removed++;
+    }
+  }
+  return removed;
 }
 
 
@@ -520,25 +677,196 @@ function removeClient(ws) {
 // ─── Rate Limiting ───────────────────────────────────────────────────────────
 
 /**
- * Check if a relay token has exceeded the rate limit.
- * Returns true if the message should be allowed, false if rate limited.
+ * Check whether a key has exceeded its rate limit in the current 1-minute
+ * window. Returns true if the request should be allowed.
+ *
+ * The key is a relay token for WebSocket traffic and a namespaced source-IP
+ * string (`enroll:<ip>`, `oauth-status:<ip>`, `oauth-miss:<ip>`) for the
+ * unauthenticated HTTP endpoints, which have no token to key on. One limiter,
+ * one sweep, one map — the namespace prefix keeps the two keyspaces from
+ * colliding.
+ *
+ * @param {string} key
+ * @param {number} [limit] - Requests allowed per window; defaults to the
+ *   WebSocket message budget.
  */
-function checkRateLimit(relayToken) {
+function checkRateLimit(key, limit = RATE_LIMIT_MESSAGES) {
   const now = Date.now();
-  let limiter = rateLimiters.get(relayToken);
+  let limiter = rateLimiters.get(key);
 
   if (!limiter || now - limiter.windowStart > RATE_LIMIT_WINDOW_MS) {
     // Start a new window
     limiter = { count: 1, windowStart: now };
-    rateLimiters.set(relayToken, limiter);
+    rateLimiters.set(key, limiter);
     return true;
   }
 
   limiter.count++;
-  if (limiter.count > RATE_LIMIT_MESSAGES) {
+  if (limiter.count > limit) {
     return false; // Rate limited
   }
 
+  return true;
+}
+
+/**
+ * Source IP to rate-limit on.
+ *
+ * The relay is documented as running behind a reverse proxy for TLS, where
+ * req.socket.remoteAddress is the proxy for every client — keying on it there
+ * would turn a per-IP budget into a global one and lock out whole families.
+ * But X-Forwarded-For is caller-controlled, so honouring it on a directly
+ * exposed relay makes the limiter decorative: an attacker just varies the
+ * header. Hence the explicit TRUST_PROXY opt-in, which the operator sets only
+ * when something in front is actually rewriting the header.
+ *
+ * Both halves have to be true — TRUST_PROXY=true here AND the proxy actually
+ * setting X-Forwarded-For. Get one without the other and every per-IP budget
+ * silently degrades to a single relay-wide budget, which is worse than no
+ * limiter because it locks out real families. The warnings below shout rather
+ * than letting it fail quietly — there are three ways to get here and the
+ * nastiest one (both halves false) used to be silent, because "no header and
+ * no TRUST_PROXY" looks like agreement while actually being the recommended
+ * nginx block in docs/self-host-security.md, which sets X-Forwarded-Proto and
+ * not X-Forwarded-For.
+ */
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
+
+/**
+ * How many trailing X-Forwarded-For entries this operator's own infrastructure
+ * appends. 1 is the single-nginx case; a CDN in front of nginx makes it 2. The
+ * key is taken from position `length - HOPS`, so with the default the rightmost
+ * (proxy-written) entry wins and forged leading entries are ignored.
+ *
+ * A header with FEWER entries than HOPS was not written by the expected chain,
+ * so it is discarded entirely rather than clamped to index 0 — clamping would
+ * hand a caller sending a single forged entry the key it asked for, which is
+ * precisely the bypass the rightmost rule exists to close.
+ */
+const TRUSTED_PROXY_HOPS = Math.max(parseInt(process.env.TRUSTED_PROXY_HOPS, 10) || 1, 1);
+
+if (!TRUST_PROXY) {
+  // docs/self-host-security.md requires a reverse proxy in front of the relay,
+  // so an unset TRUST_PROXY is always wrong in a real deployment: every per-IP
+  // budget is keyed on the proxy's address and collapses into one relay-wide
+  // budget, which one host can exhaust to deny /enroll to every family. Warned
+  // at boot because the per-request check below can only spot it when the proxy
+  // is on the same host or the same Docker network.
+  console.warn(
+    '[rate-limit] TRUST_PROXY is not set. If this relay is behind a reverse proxy (docs/self-host-security.md requires one), every per-IP rate-limit budget is keyed on the proxy address and collapses to a single relay-wide budget. Set TRUST_PROXY=true and have the proxy append X-Forwarded-For.'
+  );
+}
+
+/** Addresses that can only be a proxy or sidecar, never a real internet peer. */
+function isPrivateAddr(key) {
+  return (
+    /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(key) ||
+    key === '0:0:0:0' || // ::1 and :: after /64 bucketing
+    /^f[cd]/i.test(key) // fc00::/7 unique-local
+  );
+}
+
+let proxyMismatchWarned = false;
+function warnProxyMismatch(hasForwarded, peerKey) {
+  if (proxyMismatchWarned) return;
+  let message;
+  if (TRUST_PROXY && !hasForwarded) {
+    message =
+      '[rate-limit] TRUST_PROXY=true but no X-Forwarded-For header arrived. Every per-IP budget is collapsing to one relay-wide budget. Add `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` to the proxy, or unset TRUST_PROXY.';
+  } else if (!TRUST_PROXY && hasForwarded) {
+    message =
+      '[rate-limit] X-Forwarded-For is present but TRUST_PROXY is not set, so per-IP budgets are keyed on the proxy address and collapsing to one relay-wide budget. Set TRUST_PROXY=true if this relay really is behind a proxy you control.';
+  } else if (!TRUST_PROXY && !hasForwarded && isPrivateAddr(peerKey)) {
+    // The silent case: nothing disagrees, but the peer is a loopback/private
+    // address, so something in front is terminating the connection and no
+    // X-Forwarded-For is reaching us. Every client shares the key `peerKey`.
+    message = `[rate-limit] Requests are arriving from ${peerKey} with no X-Forwarded-For, so every client shares one rate-limit budget and one host can lock out the whole relay. Set TRUST_PROXY=true and add \`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\` to the proxy in front.`;
+  } else {
+    return;
+  }
+  proxyMismatchWarned = true;
+  console.warn(message);
+}
+
+/**
+ * Collapse an address to the unit a rate limit should actually be keyed on.
+ *
+ * IPv4 is used as-is. IPv6 is bucketed to its /64: a residential or cloud
+ * customer is routinely delegated a whole /64 (or shorter), so keying on the
+ * full /128 would hand one attacker 2^64 distinct limiter keys and make every
+ * per-IP budget on this server decorative. /64 is the smallest block an
+ * operator is guaranteed not to be sharing with a stranger.
+ *
+ * Hextets are normalised (leading zeros stripped, `::` expanded) so that the
+ * same address written two ways cannot buy two buckets.
+ */
+function ipKey(addr) {
+  if (!addr.includes(':')) return addr; // IPv4
+
+  const bare = addr.split('%')[0]; // drop any zone index (fe80::1%eth0)
+  const mapped = bare.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+  if (mapped) return mapped[1]; // IPv4-mapped IPv6 — an IPv4 host
+
+  const [head, tail] = bare.split('::');
+  const headParts = head ? head.split(':') : [];
+  const tailParts = tail ? tail.split(':') : [];
+  const parts =
+    tail === undefined
+      ? headParts
+      : [
+          ...headParts,
+          ...Array(Math.max(8 - headParts.length - tailParts.length, 0)).fill('0'),
+          ...tailParts,
+        ];
+
+  return parts
+    .slice(0, 4)
+    .map((h) => (/^[0-9a-f]{1,4}$/i.test(h) ? parseInt(h, 16).toString(16) : h))
+    .join(':');
+}
+
+function clientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (TRUST_PROXY && forwarded) {
+    warnProxyMismatch(true, null);
+    // RIGHTMOST entry, not leftmost. The recommended nginx line
+    // (`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`) and
+    // Caddy's default both APPEND the real peer to whatever the client sent,
+    // so the leftmost entry is caller-controlled — taking it would let anyone
+    // mint a fresh limiter bucket per request with a forged header and bypass
+    // every budget on this server. The rightmost entry is the only one the
+    // trusted proxy wrote. A proxy that overwrites instead of appending emits
+    // a single entry, where rightmost and leftmost coincide, so this is
+    // correct for both styles. TRUSTED_PROXY_HOPS moves the pick left by one
+    // per extra proxy the operator declares (CDN in front of nginx).
+    const hops = forwarded.split(',');
+    if (hops.length >= TRUSTED_PROXY_HOPS) {
+      return ipKey(hops[hops.length - TRUSTED_PROXY_HOPS].trim());
+    }
+    // Too few entries to have come through the declared chain — fail closed on
+    // the real peer rather than trusting a caller-supplied entry.
+  }
+  const peerKey = ipKey(req.socket.remoteAddress || 'unknown');
+  warnProxyMismatch(Boolean(forwarded), peerKey);
+  return peerKey;
+}
+
+/**
+ * Enrollment attempts per source IP per minute. Sized for a household behind
+ * one NAT re-enrolling several devices, not for a single device: enrollment is
+ * a once-per-device event, so anything sustained is a flood. Each attempt costs
+ * a tweetnacl Ed25519 verify on a 0.5-CPU container (audit L1).
+ */
+const ENROLL_RATE_LIMIT = parseInt(process.env.ENROLL_RATE_LIMIT || '20', 10);
+
+/**
+ * Reject with 429 unless the caller is within its per-IP budget for `bucket`.
+ * @returns {boolean} true if the request was rejected (response already sent).
+ */
+function rejectIfRateLimited(req, res, bucket, limit) {
+  if (checkRateLimit(`${bucket}:${clientIp(req)}`, limit)) return false;
+  res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+  res.end(JSON.stringify({ error: 'Rate limit exceeded. Try again in a minute.' }));
   return true;
 }
 
@@ -593,8 +921,41 @@ const server = createServer((req, res) => {
     return;
   }
 
-  // Health check
+  // Health check.
+  //
+  // Liveness stays unauthenticated — the Dockerfile HEALTHCHECK, the compose
+  // healthcheck and the client's testRelayConnection() all just need a 200 —
+  // but the aggregate counters that used to ship with it are the same class of
+  // operational data /stats was hardened to withhold (audit H4's tail), and
+  // the server-wide Access-Control-Allow-Origin: * made them readable by any
+  // web page a family member visited. They now require an enrolled device's
+  // relayToken, exactly like /stats.
   if (req.url === '/health' && req.method === 'GET') {
+    const healthAuth = req.headers['authorization'];
+
+    if (!healthAuth) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', version: '2.0' }));
+      return;
+    }
+
+    // No cross-origin reads of operational data
+    res.removeHeader('Access-Control-Allow-Origin');
+
+    if (!healthAuth.startsWith('Bearer ')) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid Authorization header. Expected: Bearer <relayToken>' }));
+      return;
+    }
+
+    const healthToken = healthAuth.slice('Bearer '.length).trim();
+    const healthEnrollment = enrolledDevices.get(healthToken);
+    if (!healthEnrollment || Date.now() > healthEnrollment.expiresAt) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid relay token' }));
+      return;
+    }
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'ok',
@@ -632,6 +993,10 @@ const server = createServer((req, res) => {
 
   // Device enrollment
   if (req.url === '/enroll' && req.method === 'POST') {
+    // Checked before the body is read, so a flood costs neither the buffering
+    // nor the Ed25519 verify (audit L1).
+    if (rejectIfRateLimited(req, res, 'enroll', ENROLL_RATE_LIMIT)) return;
+
     collectBody(req, 4096).then((body) => {
       // Streaming cap exceeded (connection already destroyed) or read error
       if (body === null) {
@@ -886,6 +1251,11 @@ const server = createServer((req, res) => {
 
   // GET /oauth/authorize — account linking HTML page showing pairing code
   if (req.url.startsWith('/oauth/authorize') && req.method === 'GET') {
+    // This is the only unauthenticated route that allocates server state, so it
+    // is limited first — before the allowlist check, so a rejected caller
+    // cannot probe which redirect_uris are registered for free either.
+    if (rejectIfRateLimited(req, res, 'oauth-authorize', OAUTH_AUTHORIZE_LIMIT)) return;
+
     const reqUrl = new URL(req.url, `http://${req.headers.host}`);
     const redirectUri = reqUrl.searchParams.get('redirect_uri');
     const state = reqUrl.searchParams.get('state');
@@ -898,6 +1268,33 @@ const server = createServer((req, res) => {
       return;
     }
 
+    // Exact match against the operator's registered URIs. Prefix matching would
+    // accept https://oauth.example.com/cb.evil.net/, so it is deliberately not
+    // used. An unset allowlist means no assistant client is registered and
+    // every link attempt is refused.
+    if (!ASSISTANT_REDIRECT_URIS.includes(redirectUri)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end(
+        ASSISTANT_REDIRECT_URIS.length === 0
+          ? 'No assistant redirect_uri is registered on this relay. Set ASSISTANT_REDIRECT_URIS.'
+          : 'redirect_uri is not registered on this relay'
+      );
+      return;
+    }
+
+    // Hard bound on allocated state. Sweep first (cheap, and most of the map is
+    // usually expired), then refuse rather than grow without limit: an
+    // unbounded map is both an OOM on a relay that also carries every family's
+    // WebSocket sync and an unbounded cost for findPairingSession's scan.
+    if (oauthSessions.size >= OAUTH_MAX_SESSIONS) {
+      cleanOauthSessions();
+      if (oauthSessions.size >= OAUTH_MAX_SESSIONS) {
+        res.writeHead(503, { 'Content-Type': 'text/plain', 'Retry-After': '60' });
+        res.end('Too many pending account-linking sessions. Try again shortly.');
+        return;
+      }
+    }
+
     const pairingCode = generatePairingCodeString();
     oauthSessions.set(pairingCode, {
       redirectUri,
@@ -908,7 +1305,8 @@ const server = createServer((req, res) => {
       familyId: null,
       encryptedMasterKey: null,
       authCode: null,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      attempts: 0
     });
 
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -916,8 +1314,16 @@ const server = createServer((req, res) => {
     return;
   }
 
-  // GET /oauth/status — poll endpoint for pairing screen
+  // GET /oauth/status — poll endpoint for pairing screen.
+  //
+  // Two budgets, because they bound different attacks: OAUTH_POLL_LIMIT caps
+  // total polls per IP (the linking page needs ~40/min), and OAUTH_MISS_LIMIT
+  // caps *misses* per IP across this endpoint and /api/oauth/pair. A legitimate
+  // client polls a code it already has and never misses, so the miss budget is
+  // spent only by someone walking the keyspace.
   if (req.url.startsWith('/oauth/status') && req.method === 'GET') {
+    if (rejectIfRateLimited(req, res, 'oauth-status', OAUTH_POLL_LIMIT)) return;
+
     const reqUrl = new URL(req.url, `http://${req.headers.host}`);
     const pairingCode = reqUrl.searchParams.get('pairingCode');
     if (!pairingCode) {
@@ -926,12 +1332,14 @@ const server = createServer((req, res) => {
       return;
     }
 
-    const session = oauthSessions.get(pairingCode);
-    if (!session) {
+    const found = findPairingSession(pairingCode);
+    if (!found) {
+      if (rejectIfRateLimited(req, res, 'oauth-miss', OAUTH_MISS_LIMIT)) return;
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Session not found or expired' }));
       return;
     }
+    const session = found.session;
 
     if (session.linked) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -949,6 +1357,8 @@ const server = createServer((req, res) => {
 
   // POST /api/oauth/pair — pairing submission from mobile app
   if (req.url === '/api/oauth/pair' && req.method === 'POST') {
+    if (rejectIfRateLimited(req, res, 'oauth-status', OAUTH_POLL_LIMIT)) return;
+
     collectBody(req, 4096).then((body) => {
       if (body === null) {
         res.writeHead(413, { 'Content-Type': 'application/json' });
@@ -957,16 +1367,58 @@ const server = createServer((req, res) => {
       }
       try {
         const { pairingCode, familyId, encryptedMasterKey } = JSON.parse(body);
-        if (!pairingCode || !familyId || !encryptedMasterKey) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'pairingCode, familyId, and encryptedMasterKey are required' }));
+
+        // Resolve the code BEFORE validating the rest of the payload, so that a
+        // malformed submission still costs the code one of its attempts —
+        // otherwise the attempt budget below could be sidestepped by always
+        // omitting a field.
+        const found = pairingCode ? findPairingSession(pairingCode) : null;
+        if (!found) {
+          if (rejectIfRateLimited(req, res, 'oauth-miss', OAUTH_MISS_LIMIT)) return;
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid or expired pairing code' }));
+          return;
+        }
+        const session = found.session;
+
+        // A pairing code links exactly one family. Without this, anyone who
+        // learned the code after the legitimate link could overwrite familyId
+        // and encryptedMasterKey and have the pending authorization mint a
+        // token for THEIR family instead.
+        //
+        // Checked BEFORE the attempt counter is touched, deliberately: once a
+        // session is linked its remaining budget is irrelevant, and burning it
+        // would let a third party who knows the code destroy an
+        // already-successful link before the vendor exchanges the authCode.
+        if (session.linked) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'This pairing code has already been linked' }));
           return;
         }
 
-        const session = oauthSessions.get(pairingCode);
-        if (!session) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Invalid or expired pairing code' }));
+        // Bounded attempts per code: a real app submits once. Anything past the
+        // budget destroys the session, so a code that leaks (shoulder-surfed
+        // off the linking page, say) cannot be probed indefinitely.
+        //
+        // Counted before the payload is validated, so the budget cannot be
+        // sidestepped by always omitting a field.
+        //
+        // ponytail: known ceiling — a third party who learns an UNLINKED code
+        // can spend its budget and force the owner to restart linking. That is
+        // a denial of the link, not a hijack of it, the window is
+        // OAUTH_SESSION_TTL_MS, and the alternative is per-caller attempt
+        // state. Add that only if link-restart abuse is ever observed.
+        session.attempts = (session.attempts || 0) + 1;
+        if (session.attempts > OAUTH_PAIR_MAX_ATTEMPTS) {
+          oauthSessions.delete(found.code);
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Too many attempts for this pairing code. Start linking again.' }));
+          return;
+        }
+
+        if (!familyId || !encryptedMasterKey) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'pairingCode, familyId, and encryptedMasterKey are required' }));
           return;
         }
 
@@ -1015,10 +1467,21 @@ const server = createServer((req, res) => {
           return;
         }
 
+        // This path matches on authCode, not on the pairing code, so it does
+        // not go through findPairingSession — which means it has to apply
+        // OAUTH_SESSION_TTL_MS itself. Without this an expired-but-linked
+        // session stayed exchangeable for a 1-year access token until the
+        // hourly sweep happened to run, so the real window was ~1 hour rather
+        // than the 10 minutes the TTL advertises.
         let foundCode = null;
         let foundSession = null;
+        const nowMs = Date.now();
         for (const [pCode, session] of oauthSessions.entries()) {
           if (session.authCode === code) {
+            if (nowMs - session.createdAt > OAUTH_SESSION_TTL_MS) {
+              oauthSessions.delete(pCode);
+              break; // expired: treat as no match
+            }
             foundCode = pCode;
             foundSession = session;
             break;
@@ -1552,10 +2015,21 @@ async function handleTokenRequest(req, res) {
     return;
   }
 
-  const deviceId = enrollment.deviceId;
-
-  // 3. Per-device rate limit check
-  if (!checkTokenRateLimit(deviceId)) {
+  // 3. Per-enrollment rate limit check.
+  //
+  // Keyed on relayToken, NOT enrollment.deviceId (audit H11). /enroll stores
+  // deviceId verbatim from the request body — nothing signs it, since the
+  // invite's Ed25519 signature covers the *inviter's* deviceId, never the
+  // enrollee's — and a deviceId is public inside a family (it is the base64
+  // signing key embedded in every invite). Keying on it therefore let any
+  // family member enroll while claiming a peer's deviceId and spend that
+  // peer's hourly budget, 429ing a victim who had issued nothing. relayToken
+  // is 32 CSPRNG bytes minted server-side and is not attacker-choosable.
+  //
+  // This does not raise the issuance ceiling in any meaningful way: a fresh
+  // bucket still costs a fresh enrollment, which is what MAX_DEVICES_PER_FAMILY
+  // and the /enroll limiter bound.
+  if (!checkTokenRateLimit(relayToken)) {
     res.writeHead(429, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       error: `Token rate limit exceeded. Max ${TOKEN_RATE_LIMIT} tokens per hour per device.`,
@@ -1677,6 +2151,13 @@ server.listen(RELAY_PORT, () => {
       if (cleaned > 0 || prunedInvites > 0) {
         console.log(`[cleanup] Removed ${cleaned} expired token(s) and ${prunedInvites} expired invite(s)`);
         persistState();
+      }
+      // Pairing sessions past their TTL. Expiry is already enforced on every
+      // read (findPairingSession); this sweep only keeps the map from holding
+      // abandoned sessions until restart.
+      const prunedSessions = cleanOauthSessions();
+      if (prunedSessions > 0) {
+        console.log(`[cleanup] Removed ${prunedSessions} expired pairing session(s)`);
       }
       // Retention: age out stored encrypted updates (ciphertext-only, but
       // don't keep them forever). Default 30 days, override via UPDATE_TTL_MS.

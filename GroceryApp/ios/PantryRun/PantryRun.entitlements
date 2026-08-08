@@ -3,7 +3,18 @@
 <plist version="1.0">
   <dict>
     <key>aps-environment</key>
-    <string>development</string>
+    <!-- Release/store builds must register against the production APNs environment.
+         EAS regenerates this on a managed prebuild, but this native tree is committed
+         and is the path that actually ships, so the committed value is what counts:
+         with "development" a store build gets sandbox tokens and production push
+         silently fails (audit L12).
+
+         This file is the *Release* configuration only. Debug signs against
+         PantryRun/PantryRunDebug.entitlements, which keeps "development" so it
+         matches the Apple Development provisioning profile that `eas build
+         --profile development` and `expo run:ios` use — see project.pbxproj,
+         CODE_SIGN_ENTITLEMENTS. Do not re-point the two at one file. -->
+    <string>production</string>
     <key>com.apple.developer.associated-domains</key>
     <array>
       <string>applinks:groceryapp.app</string>

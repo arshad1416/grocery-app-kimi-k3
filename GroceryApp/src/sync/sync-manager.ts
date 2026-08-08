@@ -69,6 +69,12 @@ export class SyncManager {
     this.wsClient.onNotification = (listId, payload, senderDeviceId) => {
       this.handleIncomingNotification(listId, payload, senderDeviceId);
     };
+    this.wsClient.onReconnected = () => {
+      this.reconcileAll();
+    };
+    this.wsClient.onSyncRequest = (listId, stateVector) => {
+      this.answerSyncRequest(listId, stateVector);
+    };
 
     await this.wsClient.init();
     this.ready = true;
@@ -155,6 +161,48 @@ export class SyncManager {
     this.wsClient.sendNotification(listId, encryptedPayload);
   }
 
+  // ─── Reconciliation ────────────────────────────────────────────────────
+  // Yjs already solves "what did I miss?": a state vector says where a replica
+  // is up to, and encodeStateAsUpdate(doc, thatVector) is exactly the delta it
+  // lacks. The relay cannot compute that — it only ever holds ciphertext — so
+  // reconciliation runs peer to peer, with the relay merely broadcasting the
+  // sealed state vector. Without this, any dropped update (queue overflow, an
+  // app killed before delivery, relay TTL expiry, a wiped relay volume) is
+  // permanent divergence rather than a gap that closes on the next connect.
+
+  /**
+   * Publish our state vector for every live document. Called on every
+   * (re)connect, once the offline queue has drained so peers reply against
+   * our newest state.
+   */
+  private reconcileAll(): void {
+    if (!this.wsClient) return;
+    for (const listId of getActiveDocIds()) {
+      this.wsClient.sendStateVector(listId, Y.encodeStateVector(getDoc(listId)));
+    }
+  }
+
+  /**
+   * Answer a peer's state vector with the delta it is missing.
+   *
+   * Sent as an ordinary `update`, so it reaches every device rather than just
+   * the asker. Yjs updates are idempotent and commutative, so the peers that
+   * did not need it merge a no-op.
+   * ponytail: broadcast rather than unicast — with a family-sized device count
+   * the extra traffic is noise; add a `to` field on the relay if it ever isn't.
+   */
+  private answerSyncRequest(listId: string, stateVector: Uint8Array): void {
+    // Never answer for a list we do not already track — getDoc() would create
+    // an empty document as a side effect and we would reply with nothing.
+    if (!this.wsClient || !getActiveDocIds().includes(listId)) return;
+    try {
+      const diff = Y.encodeStateAsUpdate(getDoc(listId), stateVector);
+      this.wsClient.sendUpdate(listId, diff);
+    } catch (err) {
+      console.warn('SyncManager: failed to answer sync request', err);
+    }
+  }
+
   // ─── Remote Update Handling ────────────────────────────────────────────
 
   /**
@@ -231,7 +279,14 @@ export class SyncManager {
    * Persist current Yjs state for a list to WatermelonDB.
    */
   private async persistListToDB(listId: string): Promise<void> {
-    if (!this.encryptionKey) return;
+    // No key means nothing can be written at all. This used to `return`
+    // cleanly, which is why the ungated ordering — registerList() from the
+    // stores before init()/hydrateFromDB() has supplied the key — dropped
+    // every write while both .catch sites above stayed silent. Throwing routes
+    // it through reportPersistError like any other failed write.
+    if (!this.encryptionKey) {
+      throw new Error(`no encryption key available; cannot persist list ${listId}`);
+    }
 
     const list = extractList(listId);
     const items = extractItems(listId);

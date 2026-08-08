@@ -15,6 +15,7 @@
         {}
       ],
       "./plugins/withLibcxxPickFirst.js",
+      "./plugins/withNetworkSecurityConfig.js",
       [
         "expo-notifications",
         {
@@ -25,7 +26,7 @@
     ],
     "ios": {
       "bundleIdentifier": "com.shiftlogichq.pantryrun",
-      "buildNumber": "1",
+      "buildNumber": "31",
       "supportsTablet": true,
       "associatedDomains": [
         "applinks:groceryapp.app"
@@ -81,8 +82,6 @@
       },
       "predictiveBackGestureEnabled": false,
       "permissions": ["POST_NOTIFICATIONS"],
-      "_usesCleartextTrafficNote": "Required for self-hosted relay WebSocket connections on local network (ws:// scheme without TLS)",
-      "usesCleartextTraffic": true,
       "intentFilters": [
         {
           "action": "VIEW",

@@ -17,24 +17,31 @@ const { collectBody } = require('../lib/collect-body');
 
 // ─── Rate Limiting ──────────────────────────────────────────────────────────
 
-/** Map<deviceId, { count: number, windowStart: number }> */
+/** Map<relayToken, { count: number, windowStart: number }> */
 const extractRateLimiters = new Map();
 const EXTRACT_RATE_LIMIT = parseInt(process.env.EXTRACT_RATE_LIMIT || '10', 10);
 const EXTRACT_RATE_WINDOW_MS = 60_000; // 1 minute
 
 /**
- * Check per-device extract rate limit.
+ * Check per-enrollment extract rate limit.
  *
- * @param {string} deviceId
+ * Keyed on the server-minted relayToken, matching checkTokenRateLimit in
+ * server.js (audit H11). A deviceId is chosen by the client at enrollment, so
+ * two enrollments can assert the same one and share — or collide over — a
+ * budget. The relayToken is minted by the relay and is 1:1 with an enrollment,
+ * which is the only identifier here the client cannot pick.
+ *
+ * @param {string} relayToken - Server-minted enrollment token, never a
+ *   client-supplied deviceId.
  * @returns {boolean} true if allowed
  */
-function checkExtractRateLimit(deviceId) {
+function checkExtractRateLimit(relayToken) {
   const now = Date.now();
-  let limiter = extractRateLimiters.get(deviceId);
+  let limiter = extractRateLimiters.get(relayToken);
 
   if (!limiter || now - limiter.windowStart > EXTRACT_RATE_WINDOW_MS) {
     limiter = { count: 1, windowStart: now };
-    extractRateLimiters.set(deviceId, limiter);
+    extractRateLimiters.set(relayToken, limiter);
     return true;
   }
 
@@ -51,9 +58,9 @@ function checkExtractRateLimit(deviceId) {
  */
 function cleanExtractRateLimiters() {
   const now = Date.now();
-  for (const [deviceId, limiter] of extractRateLimiters) {
+  for (const [relayToken, limiter] of extractRateLimiters) {
     if (now - limiter.windowStart > EXTRACT_RATE_WINDOW_MS * 2) {
-      extractRateLimiters.delete(deviceId);
+      extractRateLimiters.delete(relayToken);
     }
   }
 }
@@ -98,10 +105,9 @@ async function handleExtractRequest(req, res, enrolledDevices) {
     return;
   }
 
-  const deviceId = enrollment.deviceId;
-
-  // 2. Rate limit check (10 extracts/min per device)
-  if (!checkExtractRateLimit(deviceId)) {
+  // 2. Rate limit check (10 extracts/min per enrollment, keyed on the
+  //    server-minted relayToken rather than the client-chosen deviceId — H11)
+  if (!checkExtractRateLimit(relayToken)) {
     res.writeHead(429);
     res.end(JSON.stringify({
       error: `Extract rate limit exceeded. Max ${EXTRACT_RATE_LIMIT} extracts per minute per device.`,

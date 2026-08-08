@@ -19,9 +19,12 @@
   default 30 days). Everything persisted is ciphertext or opaque tokens;
   a relay disk image never contains plaintext list content.
 - **Flyer extraction caveat**: the optional flyer-scan feature sends the
-  flyer image itself (EXIF-stripped, plaintext over TLS) to the relay's
-  extract endpoint. That channel is NOT zero-knowledge; see
-  `src/pricing/relay-extractor.ts` and AC-11 scope note.
+  flyer image itself (EXIF-stripped, but readable by the relay) to the
+  extract endpoint. It is NOT end-to-end encrypted. TLS protects it only
+  when the relay URL is `wss://`; the shipped default is `ws://localhost`
+  (`src/config/settings.ts:32`), so on the default path the image crosses
+  the network in the clear. See `src/pricing/relay-extractor.ts` and the
+  AC-11 scope note.
 - **Voice-assistant key custody**: the relay holds ONLY the assistant RSA
   public key, never the private key (generated out of band by
   `assistant-keygen.js`, private half provisioned only to the webhook). The
@@ -67,14 +70,22 @@
 
 ## Mitigations Summary
 - **Encryption at rest**: libsodium XChaCha20-Poly1305, keys in expo-secure-store
-- **Encryption in transit**: TLS + XChaCha20-Poly1305 per-field encryption
-- **Zero-knowledge relay**: relay sees only ciphertext and routing metadata
+- **Encryption in transit**: XChaCha20-Poly1305 end-to-end, plus TLS whenever
+  the relay URL is `wss://`. The default relay URL is `ws://localhost`
+  (`src/config/settings.ts:32`), so a LAN self-host has no TLS layer — the
+  payload is still ciphertext, but the routing metadata below is on the wire
+  in the clear
+- **Content-blind relay**: relay sees only ciphertext *plus* routing metadata
+  (familyId, listId, deviceId, timing, size), and persists it. Not
+  zero-knowledge — see the operator section above
 - **Per-field AAD binding**: each encrypted field is bound to its context (list, field type)
 - **No PII**: device ID is an opaque public key; no email, phone, or name anywhere
 - **Passwordless**: Ed25519 keypairs for authentication; no passwords to leak
 - **Opt-in pricing**: pricing is off by default, with privacy disclosure on first enable
 - **Isolated scraping**: scraping adapter is self-host only, clearly flagged, isolated
-- **Key recovery**: 12-word BIP39 recovery phrase + social re-invite
+- **Key recovery**: 12-word BIP39-*style* recovery phrase (standard 2048-word
+  wordlist and SHA-256 checksum, no BIP32 derivation — `src/identity/recovery.ts`)
+  + social re-invite
 - **No analytics**: zero third-party analytics or ad SDKs
 
 ## Known Gaps

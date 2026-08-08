@@ -114,6 +114,18 @@ function parseToken(tokenStr) {
     return { valid: false, error: `Invalid token length: expected 288 bytes, got ${tokenBytes.length}` };
   }
 
+  // Reject non-canonical transport encodings. Buffer.from(_, 'base64') is
+  // lenient: base64url (`-_` for `+/`) and injected whitespace/newlines all
+  // decode to the SAME bytes while producing different strings. That is
+  // harmless now that single-use is keyed on the signed nonce below, but it
+  // costs one re-encode to make the wire form 1:1 with the bytes, so a future
+  // string-keyed lookup can never silently reintroduce the double-spend.
+  // 288 bytes is an exact multiple of 3, so the canonical form has no padding
+  // and no trailing-bit slack — this comparison is exact.
+  if (tokenBytes.toString('base64') !== encoded) {
+    return { valid: false, error: 'Non-canonical token encoding' };
+  }
+
   const signature = new Uint8Array(tokenBytes.slice(0, 256));
   const nonce = new Uint8Array(tokenBytes.slice(256, 288));
 
@@ -275,9 +287,27 @@ async function handleContribute(req, res, store) {
     return;
   }
 
-  // Single-use enforcement (replay protection)
+  // Single-use enforcement (replay protection).
+  //
+  // Keyed on the SIGNED VALUE (the 32-byte nonce), never on the transport
+  // string: the signature is verified over the decoded bytes, so any string
+  // that decodes to those bytes is the same token and must consume the same
+  // spent-set slot. Keying on tokenStr gave one signed payload unlimited
+  // distinct keys — i.e. unlimited replays (audit C1).
+  //
+  // MIGRATION — the legacy arm below is transitional. Entries already on disk
+  // were written as hashToken("v2.<base64>"); the nonce key hashes something
+  // else entirely, so those never collide and every already-spent token would
+  // become spendable exactly once the moment this deploys. isUsed(tokenStr)
+  // closes that window without wiping the store. Legacy entries were always
+  // written from a canonical string, so the canonicality check in parseToken
+  // does not stop this arm from matching a genuine legacy replay.
+  // The arm can be dropped once every token issued before this deploy is
+  // known to be spent or abandoned — note the v2 format carries no expiry, so
+  // that is an operator judgement call, not a date the code can compute.
   if (usedTokensStore) {
-    if (!usedTokensStore.checkAndMark(tokenStr)) {
+    const nonceKey = Buffer.from(parsed.nonce).toString('hex');
+    if (usedTokensStore.isUsed(tokenStr) || !usedTokensStore.checkAndMark(nonceKey)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Token has already been used' }));
       return;

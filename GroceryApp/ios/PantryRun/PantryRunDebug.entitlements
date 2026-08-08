@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>aps-environment</key>
+    <!-- Debug-configuration twin of PantryRun.entitlements. Identical except for
+         this value, and it exists only because aps-environment cannot be one
+         value for both configurations.
+
+         Debug is signed with an Apple *Development* provisioning profile — that
+         is what `eas build --profile development` (developmentClient: true) and
+         `expo run:ios` both provision — and a Development profile carries
+         aps-environment: development. Claiming "production" here makes the
+         entitlement disagree with the profile and the build fails to sign, so
+         the L12 fix on the release side must not be applied to this file.
+
+         Keep the associated-domains array below in sync with the release
+         entitlements; universal links behave the same in both configurations. -->
+    <string>development</string>
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+      <string>applinks:groceryapp.app</string>
+    </array>
+  </dict>
+</plist>
