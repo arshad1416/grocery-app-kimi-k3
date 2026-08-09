@@ -194,46 +194,57 @@ check('M7: production builds auto-increment the build number', () => {
 // this ONLY to a number that has genuinely shipped.
 const LAST_SHIPPED_BUILD = 31;
 
-check('M7: the local version seed that EAS initialises "remote" from is intact', () => {
-  // With appVersionSource "remote", EAS seeds its counter from the local config
-  // on the first remote build and auto-increments from there. That is safe here
-  // only because app.json still carries the shipped numbers. Deleting them —
-  // the natural instinct once "remote owns versioning" — makes EAS start from 1,
-  // and Play rejects any versionCode <= 31. The failure lands at submission
-  // time, long after the build looked fine, so pin the seed here.
-  const expo = readJson('app.json').expo;
-  const versionCode = expo.android && expo.android.versionCode;
-  const buildNumber = expo.ios && expo.ios.buildNumber;
+check('M7: the version seed EAS actually reads is intact', () => {
+  // Guard the NATIVE values, not app.json. `eas build:version:get` says so
+  // outright on this project:
+  //
+  //   "android.versionCode field in app config is ignored when version source
+  //    is set to remote"
+  //   "Specified value for android.package in app.json is ignored because an
+  //    android directory was detected. EAS Build will use the value found in
+  //    the native code."
+  //
+  // The native trees are committed here, so build.gradle and Info.plist are the
+  // real seed; an earlier version of this check pinned app.json, which EAS does
+  // not read at all. Getting this wrong means a build that looks fine and is
+  // rejected at submission, because Play refuses any versionCode <= the live one.
+  const versionCode = Number(/versionCode\s+(\d+)/.exec(read('android/app/build.gradle'))[1]);
+  const bundleVersion = Number(
+    /<key>CFBundleVersion<\/key>\s*<string>([^<]*)<\/string>/.exec(read('ios/PantryRun/Info.plist'))[1]
+  );
 
   assert.ok(
-    Number.isInteger(versionCode),
-    'app.json expo.android.versionCode is missing — EAS would seed the remote counter at 1'
+    Number.isInteger(versionCode) && versionCode >= LAST_SHIPPED_BUILD,
+    `android/app/build.gradle versionCode ${versionCode} is below the shipped ` +
+      `${LAST_SHIPPED_BUILD}; Play rejects a versionCode that is not strictly greater than the live one`
   );
   assert.ok(
-    versionCode >= LAST_SHIPPED_BUILD,
-    `app.json versionCode ${versionCode} is below the shipped ${LAST_SHIPPED_BUILD}; ` +
-      'Play rejects a versionCode that is not strictly greater than the live one'
-  );
-  assert.ok(
-    buildNumber != null && Number(buildNumber) >= LAST_SHIPPED_BUILD,
-    `app.json ios.buildNumber ${buildNumber} is below the shipped ${LAST_SHIPPED_BUILD}`
+    Number.isInteger(bundleVersion) && bundleVersion >= LAST_SHIPPED_BUILD,
+    `ios/PantryRun/Info.plist CFBundleVersion ${bundleVersion} is below the shipped ${LAST_SHIPPED_BUILD}`
   );
 });
 
-pending('M7: the EAS remote version counter has been verified against the live build', () => {
-  // Not checkable from the repo: the counter lives on EAS servers and reading it
-  // needs an authenticated session for owner "shiftlogichq". The seed above makes
-  // a FRESH project initialise correctly; it cannot rule out a stale counter left
-  // by an earlier remote build. One command settles it, before the next release:
+pending('M7: the EAS remote ANDROID version counter is initialised', () => {
+  // iOS is DONE. Checked against EAS on 2026-08-08 with an authenticated session:
+  // the project had no remote versions at all, and the first `eas build --platform
+  // ios` initialised buildNumber from the native value —
+  //   "No remote versions are configured for this project, buildNumber will be
+  //    initialized based on the value from the local project. Initializing
+  //    buildNumber with 31."
+  // `build:version:get --platform ios` now reports 31, so the next build is 32.
   //
+  // Android has NOT been initialised yet — `build:version:get --platform android`
+  // still reports "No remote versions are configured for this project". It will
+  // initialise the same proven way from build.gradle's versionCode 31 on the first
+  // Android EAS build, which the check above keeps intact. Left PENDING because
+  // that has been reasoned, not observed, and Play rejects a versionCode <= 31.
+  //
+  // Confirm with one command, then delete this entry:
   //   npx eas-cli build:version:get --platform android
-  //   npx eas-cli build:version:set --platform android   # only if it reads < 31
-  //   npx eas-cli build:version:get --platform ios
-  //
-  // Delete this entry once the counters are confirmed >= LAST_SHIPPED_BUILD.
   assert.fail(
-    `EAS remote counter unverified. Run \`npx eas-cli build:version:get --platform android\` ` +
-      `and confirm it is >= ${LAST_SHIPPED_BUILD} before the next production build`
+    `EAS remote Android counter not yet initialised. It should seed from build.gradle at ` +
+      `${LAST_SHIPPED_BUILD} on the first Android EAS build (iOS did exactly that). Confirm with ` +
+      `\`npx eas-cli build:version:get --platform android\` before submitting.`
   );
 });
 

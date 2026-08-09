@@ -1,6 +1,6 @@
 # PantryRun — ship readiness
 
-State at `e4eeec3`. Goal set for this pass: **Android production, iOS first submission, and a
+State at `4764adf`+. Verified against a live EAS session on 2026-08-08. Goal set for this pass: **Android production, iOS first submission, and a
 deployable hardened relay.** grocery-app retired.
 
 ## Verdict
@@ -8,8 +8,8 @@ deployable hardened relay.** grocery-app retired.
 | Target | State | What remains |
 |---|---|---|
 | **Relay** | **Ready to deploy** | Nothing in the code. Needs a host + TLS. |
-| **Android** | **Ready to build and submit** | Verify the EAS remote version counter, then build. |
-| **iOS** | **Code ready, unverifiable here** | Needs a signing identity — see §4. |
+| **Android** | **Ready to build and submit** | Confirm the remote versionCode seeds at 31 on the first build. |
+| **iOS** | **Code ready; blocked on Apple credentials** | EAS holds no iOS distribution creds — see §4. |
 
 Every automated gate passes:
 
@@ -71,21 +71,30 @@ the real upload key.
 `cd GroceryApp && npm run check:release` is the machine-checkable form; it runs in CI on every push
 and fails only on regression, reporting these as PENDING.
 
-**a. Initialise the EAS remote version counter — before the next production build.**
-`appVersionSource` is `remote` with `autoIncrement: true`. EAS seeds the counter from the local
-config, and `app.json` still carries `versionCode: 31` / `buildNumber: "31"`, so a fresh project
-lands on 32. That cannot be confirmed from here — reading the counter needs an authenticated Expo
-session for owner `shiftlogichq`. Play rejects any versionCode ≤ 31.
+**a. EAS version counter — iOS DONE, Android pending one command.**
+Checked against EAS on 2026-08-08 with the authenticated `shiftlogichq` session. The project had
+**no remote versions configured at all**. The first `eas build --platform ios` initialised it from
+the native value:
 
-```bash
-cd GroceryApp
-npx eas-cli build:version:get --platform android    # must be >= 31
-npx eas-cli build:version:set --platform android    # only if it reads lower
-npx eas-cli build:version:get --platform ios
+```
+No remote versions are configured for this project, buildNumber will be
+initialized based on the value from the local project.
+- Initializing buildNumber with 31.   ✔
 ```
 
-A guard now pins the seed: deleting `versionCode` from `app.json` fails the release check, because
-that is what would silently make EAS start from 1.
+`build:version:get --platform ios` now reports **31**, so the next iOS build is 32. Android still
+reports "No remote versions are configured" and will seed the same proven way from
+`android/app/build.gradle` on its first EAS build. Confirm before submitting:
+
+```bash
+npx eas-cli build:version:get --platform android    # expect 31 after the first build
+```
+
+**Correction worth knowing:** with `appVersionSource: remote` AND committed native directories, EAS
+**ignores `app.json`** and reads the native code — it says so explicitly. The seed that matters is
+`android/app/build.gradle` versionCode and `ios/PantryRun/Info.plist` CFBundleVersion. An earlier
+version of the release check guarded `app.json`, which EAS never reads; it now guards the native
+values and was verified to fail when they are lowered.
 
 **b. Provide the Play service-account key.** `eas.json` points at
 `./credentials/play-service-account.json`. Now gitignored (`credentials/`,
@@ -117,10 +126,21 @@ signing wedges `xcodebuild` (this machine has **zero valid signing identities**)
 with a synthetic `application-identifier` makes SpringBoard refuse the app outright
 (`SBMainWorkspace` denied); and there is no provisioning profile to sign against.
 
-**To close it,** run either of these — both take minutes and both produce an entitled build:
+**Both EAS routes were attempted on 2026-08-08 and are blocked on Apple credentials, not on code:**
+
+```
+--profile development  → "you don't have expo-dev-client installed"  (a native dep;
+                          not added, because adding one unasked is what broke this
+                          project repeatedly this session)
+--profile preview      → "EAS CLI couldn't find any credentials suitable for internal
+                          distribution. Run this command again in interactive mode."
+```
+
+EAS holds **no iOS distribution credentials** for this project. Creating them means signing into
+Apple, which an agent must not do. Either route closes it once you run it yourself:
 
 ```bash
-cd GroceryApp && npx eas-cli build --profile development --platform ios
+cd GroceryApp && npx eas-cli build --profile preview --platform ios   # interactive; EAS creates the cert/profile
 # or: open ios/PantryRun.xcworkspace in Xcode, set your Apple ID as the team, Run
 ```
 
