@@ -80,9 +80,30 @@ class Query {
     if (!items) return [];
     // Return the live records themselves — they already carry update() and
     // markAsDeleted(), and returning copies would lose the syncStatus accessor.
-    return Array.from(items.values()).filter((item) => !item._raw?.isDeleted);
+    let rows = Array.from(items.values()).filter((item) => !item._raw?.isDeleted);
+
+    // Honour Q.where. This used to be ignored entirely, which made
+    // `query(Q.where('id', x)).fetch()` return the WHOLE table — so every
+    // persist* saw a non-empty `existing` as soon as one row existed and took
+    // the update branch, silently overwriting an unrelated record instead of
+    // creating a new one. Any test persisting two rows was testing a fiction.
+    for (const clause of this._where) {
+      // `where()` receives either the clause object itself (from query(...))
+      // or a spread args array (from a chained .where(...)).
+      const c = Array.isArray(clause) ? clause[0] : clause;
+      const { field, value } = (c ?? {}) as { field?: string; value?: unknown };
+      if (!field) continue;
+      rows = rows.filter((r) => {
+        const actual = field === 'id' ? (r._raw?.id ?? r.id) : r[camel(field)];
+        return actual === value;
+      });
+    }
+    return rows;
   }
 }
+
+/** snake_case column name -> camelCase record property, as the real lib does. */
+const camel = (s: string) => s.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
 
 class Collection {
   private table: string;
@@ -93,6 +114,14 @@ class Collection {
 
   query(...args: any[]): Query {
     const q = new Query(this.table);
+    // Apply the clauses. These used to be DISCARDED, so
+    // `query(Q.where('id', x)).fetch()` returned the entire table — which made
+    // every persist*() see a non-empty `existing` as soon as one row existed
+    // and take the update branch, overwriting an unrelated record instead of
+    // creating a new one. Two rows could never coexist in a test.
+    for (const clause of args) {
+      if (clause) q.where(clause);
+    }
     return q;
   }
 

@@ -316,7 +316,13 @@ export class SyncManager {
     this.encryptionKey = encryptionKey;
     try {
       const lists = await loadListsFromDB(encryptionKey);
-      const allItems = await loadItemsFromDB(encryptionKey);
+      // Items are scoped by the lists that survived family scoping, not by
+      // their own familyId — otherwise an item whose familyId disagrees with
+      // its list's disappears from a list still on screen, which reads as
+      // corruption rather than absence.
+      const allItems = await loadItemsFromDB(encryptionKey, {
+        listIds: lists.map((l) => l.id),
+      });
       const indexDoc = getDoc('__lists_index__');
       for (const list of lists) {
         const listItems = allItems.filter((item) => item.listId === list.id);

@@ -137,6 +137,84 @@ export async function decryptField(
   }
 }
 
+// ─── Family scoping ──────────────────────────────────────────────────────────
+
+/**
+ * Values that appear in the `family_id` column but do not identify a family.
+ *
+ * The column was never wired to the real family identity. Every list this app
+ * has ever written carries the literal 'default-family', because HomeScreen
+ * resolves it from the family_members TABLE and `addMember` has zero callers,
+ * so that table is always empty. Items are worse: AddItemSheet and
+ * ItemEditScreen fall through to '' for the first item in a list, and every
+ * later item copies it from the first.
+ *
+ * So a filter of `family_id === currentFamilyId` — the obvious fix — would
+ * hide 100% of every existing user's lists and items. These rows are adopted
+ * into the current family on read instead, which is safe precisely because
+ * they cannot belong to any OTHER family: no code path has ever written a real
+ * familyId here.
+ */
+const LEGACY_FAMILY_IDS: ReadonlySet<string> = new Set(['', 'default-family']);
+
+const isLegacyFamilyId = (v: unknown): boolean =>
+  v == null || (typeof v === 'string' && LEGACY_FAMILY_IDS.has(v));
+
+/**
+ * Keep only rows belonging to this family, adopting legacy-scoped ones.
+ *
+ * A row is excluded ONLY when it carries a real familyId that is not ours —
+ * which is exactly the join-orphan case this exists for: joining a family
+ * replaces the device key, and the rows written under the old key are dead
+ * weight that fails to decrypt on every launch forever.
+ *
+ * `familyId === null` means membership does not exist yet (mid-provisioning,
+ * or a cold-start race). Everything is kept in that case, deliberately: a
+ * device that has not yet resolved who it is must not blank the user's lists.
+ * Excluding on an unknown identity is the failure mode that looks like total
+ * data loss.
+ */
+function scopeToFamily<T extends { familyId?: unknown }>(
+  records: readonly T[],
+  familyId: string | null,
+  label: string,
+): { kept: T[]; dropped: number } {
+  if (!familyId) return { kept: [...records], dropped: 0 };
+
+  const kept = records.filter(
+    (r) => r.familyId === familyId || isLegacyFamilyId(r.familyId),
+  );
+  const dropped = records.length - kept.length;
+  if (dropped > 0) {
+    // Say it out loud. Filtering makes rows DISAPPEAR, which from the user's
+    // side is indistinguishable from data loss — and a silent disappearance is
+    // the exact class of failure the rest of this work removed.
+    console.warn(
+      `[hydrate] ${label}: ignored ${dropped} row(s) belonging to a different ` +
+        `family. This is expected on a device that joined a family — the rows ` +
+        `written before the join are encrypted under the old key and can never ` +
+        `be read again.`,
+    );
+  }
+  return { kept, dropped };
+}
+
+/**
+ * The familyId to stamp on rows this device writes.
+ *
+ * Reads through to the membership in SecureStore — the ONLY place a real
+ * familyId has ever lived. Returns null when there is no membership yet, in
+ * which case the caller keeps whatever it was given rather than inventing one.
+ */
+async function currentFamilyId(): Promise<string | null> {
+  try {
+    const { getFamilyId } = await import('../identity/family');
+    return await getFamilyId();
+  } catch {
+    return null;
+  }
+}
+
 // ─── Write-through: encrypt and persist ───────────────────────────────────────
 
 /**
@@ -157,10 +235,16 @@ export async function persistItem(
     ? await encryptField(item.notes, key, FIELD_CONTEXTS.GROCERY_ITEM_NOTES)
     : null;
 
+  // Resolved before the write block: create() takes a synchronous callback.
+  const stampedFamilyId = (await currentFamilyId()) ?? item.familyId;
+
   const existing = await collection.query(Q.where('id', item.id)).fetch();
   await getDatabase().write(async () => {
     if (existing.length > 0) {
       await existing[0].update((record: any) => {
+        // Adopt on update too, so a legacy row corrects itself the first time
+        // it is touched rather than staying ambiguous forever.
+        if (isLegacyFamilyId(record.familyId)) record.familyId = stampedFamilyId;
         record.name = encryptedName;
         record.notes = encryptedNotes;
         record.quantity = item.quantity;
@@ -177,7 +261,9 @@ export async function persistItem(
       await collection.create((record: any) => {
         record._raw.id = item.id;
         record.listId = item.listId;
-        record.familyId = item.familyId;
+        // Stamp the REAL familyId, so new rows are correctly scoped even
+        // though every caller still hands us '' (see LEGACY_FAMILY_IDS).
+        record.familyId = stampedFamilyId;
         record.name = encryptedName;
         record.quantity = item.quantity;
         record.unit = item.unit;
@@ -218,10 +304,13 @@ export async function persistList(
     ? await encryptField(list.storePreference, key, FIELD_CONTEXTS.GROCERY_LIST_STORE_PREFERENCE)
     : null;
 
+  const stampedFamilyId = (await currentFamilyId()) ?? list.familyId;
+
   const existing = await collection.query(Q.where('id', list.id)).fetch();
   await getDatabase().write(async () => {
     if (existing.length > 0) {
       await existing[0].update((record: any) => {
+        if (isLegacyFamilyId(record.familyId)) record.familyId = stampedFamilyId;
         record.name = encryptedName;
         record.description = encryptedDesc;
         record.storePreference = encryptedStore;
@@ -235,7 +324,7 @@ export async function persistList(
     } else {
       await collection.create((record: any) => {
         record._raw.id = list.id;
-        record.familyId = list.familyId;
+        record.familyId = stampedFamilyId;
         record.name = encryptedName;
         record.description = encryptedDesc;
         record.storePreference = encryptedStore;
@@ -265,10 +354,13 @@ export async function persistMember(
     FIELD_CONTEXTS.FAMILY_MEMBER_DISPLAY_NAME,
   );
 
+  const stampedFamilyId = (await currentFamilyId()) ?? member.familyId;
+
   const existing = await collection.query(Q.where('id', member.id)).fetch();
   await getDatabase().write(async () => {
     if (existing.length > 0) {
       await existing[0].update((record: any) => {
+        if (isLegacyFamilyId(record.familyId)) record.familyId = stampedFamilyId;
         record.displayName = encryptedDisplayName;
         record.avatarUrl = member.avatarUrl ?? null;
         record.isActive = member.isActive;
@@ -281,7 +373,7 @@ export async function persistMember(
     } else {
       await collection.create((record: any) => {
         record._raw.id = member.id;
-        record.familyId = member.familyId;
+        record.familyId = stampedFamilyId;
         record.displayName = encryptedDisplayName;
         record.avatarUrl = member.avatarUrl ?? null;
         record.isActive = member.isActive;
@@ -317,9 +409,36 @@ export async function deleteRecord(
  * Read all items from WatermelonDB, decrypt sensitive fields, and return them.
  * Used by Zustand stores during app initialization.
  */
-export async function loadItemsFromDB(key: Uint8Array): Promise<GroceryItem[]> {
+export async function loadItemsFromDB(
+  key: Uint8Array,
+  options?: { listIds?: readonly string[] },
+): Promise<GroceryItem[]> {
   const collection = getDatabase().get('grocery_items');
-  const records = await collection.query().fetch();
+  const all = await collection.query().fetch();
+
+  // Scoped by LIST membership, not by the item's own familyId.
+  //
+  // Filtering items independently lets an item's familyId disagree with its
+  // list's, so the item vanishes from a list that is still on screen — a
+  // half-populated list, which is worse than a hidden one because it looks
+  // like the data is corrupt rather than absent. Membership in a surviving
+  // list is the real predicate, and it cannot skew.
+  const records =
+    options?.listIds === undefined
+      ? all
+      : (() => {
+          const allowed = new Set(options.listIds);
+          const kept = all.filter((r) => allowed.has((r as any).listId));
+          const dropped = all.length - kept.length;
+          if (dropped > 0) {
+            console.warn(
+              `[hydrate] items: ignored ${dropped} row(s) whose list is not in ` +
+                'this family.',
+            );
+          }
+          return kept;
+        })();
+
   const items: GroceryItem[] = [];
 
   for (const record of records) {
@@ -364,7 +483,12 @@ export async function loadItemsFromDB(key: Uint8Array): Promise<GroceryItem[]> {
  */
 export async function loadListsFromDB(key: Uint8Array): Promise<GroceryList[]> {
   const collection = getDatabase().get('grocery_lists');
-  const records = await collection.query().fetch();
+  const all = await collection.query().fetch();
+  const { kept: records } = scopeToFamily(
+    all as unknown as Array<{ familyId?: unknown }>,
+    await currentFamilyId(),
+    'lists',
+  ) as unknown as { kept: typeof all };
   const lists: GroceryList[] = [];
 
   for (const record of records) {
@@ -408,7 +532,12 @@ export async function loadListsFromDB(key: Uint8Array): Promise<GroceryList[]> {
  */
 export async function loadMembersFromDB(key: Uint8Array): Promise<FamilyMember[]> {
   const collection = getDatabase().get('family_members');
-  const records = await collection.query().fetch();
+  const all = await collection.query().fetch();
+  const { kept: records } = scopeToFamily(
+    all as unknown as Array<{ familyId?: unknown }>,
+    await currentFamilyId(),
+    'members',
+  ) as unknown as { kept: typeof all };
   const members: FamilyMember[] = [];
 
   for (const record of records) {
