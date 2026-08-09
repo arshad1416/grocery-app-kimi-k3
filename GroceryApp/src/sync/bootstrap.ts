@@ -135,6 +135,9 @@ export async function bootstrapSync(): Promise<'no-key' | 'local-only' | 'connec
       onSyncError: (err: Error) => {
         useSyncStore.getState().reportSyncError(err);
       },
+      onDecryptRecovered: (listId: string) => {
+        useSyncStore.getState().noteDecryptOk(listId);
+      },
       onRemoteItemsUpdate: (listId, items) => {
         // Refresh the visible list when a family member's update arrives.
         const grocery = useGroceryStore.getState();

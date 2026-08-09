@@ -109,6 +109,8 @@ export class YjsWebSocketClient {
   // Callbacks
   onStateChange?: (state: ConnectionState) => void;
   onError?: (error: Error) => void;
+  /** A previously-unreadable list decrypted cleanly again. */
+  onDecryptRecovered?: (listId: string) => void;
   /** Called when a remote update is received and applied */
   onRemoteUpdate?: (listId: string, update: Uint8Array) => void;
   /** Called when the offline queue is drained */
@@ -457,14 +459,17 @@ export class YjsWebSocketClient {
         // under the family key with the same envelope as an update, so the
         // relay learns nothing beyond "someone reconciled this list".
         if (data.listId && data.payload) {
+          // Same narrow scope as the 'update' case, for the same reason.
+          let stateVector: Uint8Array;
           try {
-            const stateVector = this.decryptUpdate(data.payload, data.listId);
-            this.onSyncRequest?.(data.listId, stateVector, data.deviceId ?? '');
+            stateVector = this.decryptUpdate(data.payload, data.listId);
           } catch (err) {
-            // Same cause as the 'update' case, same reporting. It used to warn
-            // to the console only, which no user has ever read.
+            // Used to warn to the console only, which no user has ever read.
             this.reportDecryptFailure(data.listId, err);
+            break;
           }
+          this.noteDecryptOk(data.listId);
+          this.onSyncRequest?.(data.listId, stateVector, data.deviceId ?? '');
         }
         break;
       }
@@ -476,12 +481,21 @@ export class YjsWebSocketClient {
           // every incoming update while the UI kept saying "Synced". That is
           // the worst possible presentation of this failure: the user believes
           // they are seeing the family's lists and they are not.
+          // The try covers ONLY the decrypt. An earlier version also wrapped
+          // onRemoteUpdate, which routes into Y.applyUpdate and a zustand
+          // setState whose subscribers run SYNCHRONOUSLY — so any throwing
+          // selector or render came back through this catch and was relabelled
+          // a decryption failure by construction, latching "can't read your
+          // lists" on a device whose key was perfectly correct.
+          let decrypted: Uint8Array;
           try {
-            const decrypted = this.decryptUpdate(data.payload, data.listId);
-            this.onRemoteUpdate?.(data.listId, decrypted);
+            decrypted = this.decryptUpdate(data.payload, data.listId);
           } catch (err) {
             this.reportDecryptFailure(data.listId, err);
+            break;
           }
+          this.noteDecryptOk(data.listId);
+          this.onRemoteUpdate?.(data.listId, decrypted);
         }
         break;
       }
@@ -566,11 +580,34 @@ export class YjsWebSocketClient {
    * the count still accumulates for anyone reading it.
    */
   private reportDecryptFailure(listId: string, cause: unknown): void {
-    const err = new DecryptFailureError(listId, cause);
     if (this.reportedDecryptFailures.has(listId)) return;
     this.reportedDecryptFailures.add(listId);
+    const err = new DecryptFailureError(listId, cause);
     console.warn('[sync]', err.message, cause);
-    this.onError?.(err);
+    // onError reaches a zustand set, whose subscribers run synchronously, so a
+    // bad render can throw from here. That must not escape into the socket's
+    // message handler — the generic catch there is the swallow this whole
+    // change exists to remove, and re-entering it would be circular.
+    try {
+      this.onError?.(err);
+    } catch (reportErr) {
+      console.warn('[sync] decrypt-failure listener threw', reportErr);
+    }
+  }
+
+  /**
+   * A list decrypted cleanly. If it had been reported as unreadable, say so —
+   * otherwise a device that is fixed by a correct recovery goes on telling the
+   * user it cannot read their lists, with force-quitting the app as the only
+   * way to clear it. Reporting a problem you never retract is its own defect.
+   */
+  private noteDecryptOk(listId: string): void {
+    if (!this.reportedDecryptFailures.delete(listId)) return;
+    try {
+      this.onDecryptRecovered?.(listId);
+    } catch (err) {
+      console.warn('[sync] decrypt-recovery listener threw', err);
+    }
   }
 
   private decryptUpdate(data: EncryptedData, listId: string): Uint8Array {

@@ -33,6 +33,8 @@ import type { EncryptedData } from '../types';
 export interface SyncCallbacks {
   onConnectionChange?: (state: ConnectionState) => void;
   onSyncError?: (error: Error) => void;
+  /** A list that had been reported unreadable now decrypts — retract it. */
+  onDecryptRecovered?: (listId: string) => void;
   onRemoteItemsUpdate?: (listId: string, items: GroceryItem[]) => void;
 }
 
@@ -62,6 +64,9 @@ export class SyncManager {
     };
     this.wsClient.onError = (err) => {
       this.callbacks.onSyncError?.(err);
+    };
+    this.wsClient.onDecryptRecovered = (listId) => {
+      this.callbacks.onDecryptRecovered?.(listId);
     };
     this.wsClient.onRemoteUpdate = (listId, update) => {
       this.applyRemoteUpdate(listId, update);

@@ -108,15 +108,24 @@ export async function decryptField(
   try {
     return await decrypt(parsed, key, context);
   } catch (err) {
-    // Failing closed was already right. What was missing is that the field
-    // just disappeared from the user's list with no explanation anywhere they
-    // would look — the console message below has never been read by a user.
+    // Deliberately NOT surfaced in the UI, unlike the socket path.
     //
-    // These rows are written by persistItem under the family key, including
-    // rows that arrived from other devices (sync-manager.ts:299), so a failure
-    // here means the same thing it means at the socket: this device's key does
-    // not match its own data.
-    await reportHydrateDecryptFailure(context);
+    // A failure here is NOT reliable evidence of a key mismatch. Joining a
+    // family legitimately replaces this device's key (recovery.ts, and the
+    // confirm dialog says so in as many words) and nothing wipes the rows
+    // written under the old one — loadItemsFromDB/loadListsFromDB fetch the
+    // whole collection with no familyId filter. So on a device that joined a
+    // family and is syncing perfectly, hydration walks orphaned old-key rows
+    // on EVERY launch and every one of them fails here. Driving the indicator
+    // from this would latch "can't read your lists" permanently on a healthy
+    // device — a false alarm that is worse than the silence it replaced,
+    // because it trains the user to ignore the one warning that matters.
+    //
+    // decrypt() also base64-decodes inside its own try, so a truncated or
+    // half-written field lands here too and is not an AEAD failure at all.
+    //
+    // The socket path has none of that ambiguity: a live family member sent
+    // something this device cannot read, right now. That is what drives the UI.
     console.error(
       `[hydrate] AEAD authentication failed for field context "${context}". ` +
         'This means the wrong key, or corrupted/tampered ciphertext — NOT that ' +
@@ -126,41 +135,6 @@ export async function decryptField(
     );
     return null;
   }
-}
-
-/** Contexts already reported this session — see reportHydrateDecryptFailure. */
-const reportedContexts = new Set<string>();
-
-/**
- * Surface a hydrate decryption failure in the UI, at most once per context.
- *
- * Throttled because hydration walks every row: a wrong key fails on all of
- * them, so an unthrottled report would be one store write per field per item.
- * Reported once per context ('item.name', 'list.description', …), which is
- * enough to change what the indicator says.
- *
- * The import is dynamic so storage/ takes no static dependency on state/,
- * which would close a cycle through useSyncStore -> sync-manager. It is
- * AWAITED rather than fired and forgotten: the caller is already async, the
- * module is cached after the first hit, and a report that lands a tick later
- * than the null it explains is a race every caller would have to know about.
- * Errors are swallowed — failing to report must never turn a withheld field
- * into a thrown hydrate.
- */
-async function reportHydrateDecryptFailure(context: string): Promise<void> {
-  if (reportedContexts.has(context)) return;
-  reportedContexts.add(context);
-  try {
-    const { useSyncStore } = await import('../state/useSyncStore');
-    useSyncStore.getState().noteDecryptFailure(context);
-  } catch {
-    // Reporting is best-effort; the withheld field is the guarantee.
-  }
-}
-
-/** Test-only: forget which contexts have been reported. */
-export function __resetHydrateFailureReporting(): void {
-  reportedContexts.clear();
 }
 
 // ─── Write-through: encrypt and persist ───────────────────────────────────────

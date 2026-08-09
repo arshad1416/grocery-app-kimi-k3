@@ -33,8 +33,7 @@ export interface SyncStateShape {
    * wrong key and pushing them to the family's stream. So it is sticky, and
    * only an explicit clear removes it.
    */
-  decryptFailures: number;
-  lastDecryptContext: string | null;
+  undecryptableLists: readonly string[];
 
   // Actions
   setSyncState: (state: SyncState) => void;
@@ -43,8 +42,8 @@ export interface SyncStateShape {
   markSynced: () => void;
   clearError: () => void;
   reportSyncError: (err: Error) => void;
-  noteDecryptFailure: (context: string) => void;
-  clearDecryptFailures: () => void;
+  noteDecryptFailure: (listId: string) => void;
+  noteDecryptOk: (listId: string) => void;
   refreshPendingCount: () => void;
 }
 
@@ -67,14 +66,14 @@ export interface SyncStateShape {
 export function syncIndicatorStatus(s: {
   syncState: SyncState;
   error: string | null;
-  decryptFailures: number;
+  undecryptableLists: readonly string[];
 }): { label: string; color: string } {
   // Checked FIRST, ahead of syncState. A device whose key does not match the
   // family's data is connected, online, and reporting 'idle' — every signal
   // the socket has says everything is fine, and none of them is about whether
   // the data can be read. Deferring to syncState here would render "Synced"
   // over a device that is discarding every message it receives.
-  if (s.decryptFailures > 0) {
+  if (s.undecryptableLists.length > 0) {
     return { label: "Can't read family lists", color: '#f44336' };
   }
 
@@ -90,7 +89,7 @@ export function syncIndicatorStatus(s: {
 
 // ─── Store ──────────────────────────────────────────────────────────────────
 
-export const useSyncStore = create<SyncStateShape>((set) => ({
+export const useSyncStore = create<SyncStateShape>((set, get) => ({
   // Start as not_configured: a fresh device has no relay/family, so it must not
   // display "Synced". bootstrapSync() promotes this once a relay connects.
   syncState: 'not_configured',
@@ -99,8 +98,7 @@ export const useSyncStore = create<SyncStateShape>((set) => ({
   pendingUploads: 0,
   pendingDownloads: 0,
   error: null,
-  decryptFailures: 0,
-  lastDecryptContext: null,
+  undecryptableLists: [],
 
   setSyncState: (syncState) => {
     set({ syncState });
@@ -182,24 +180,37 @@ export const useSyncStore = create<SyncStateShape>((set) => ({
     if (err instanceof DecryptFailureError) {
       // Sticky: no reconnect fixes a key mismatch, and a wrong-key device
       // connects perfectly, so leaving this to syncState would erase it.
-      set((s) => ({
-        decryptFailures: s.decryptFailures + 1,
-        lastDecryptContext: err.context,
-      }));
+      get().noteDecryptFailure(err.context);
       return;
     }
     set({ error: err.message, syncState: 'error' });
   },
 
-  noteDecryptFailure: (context) => {
-    set((s) => ({
-      decryptFailures: s.decryptFailures + 1,
-      lastDecryptContext: context,
-    }));
+  noteDecryptFailure: (listId) => {
+    set((s) =>
+      s.undecryptableLists.includes(listId)
+        ? s
+        : { undecryptableLists: [...s.undecryptableLists, listId] },
+    );
   },
 
-  /** Call after a successful re-key or recovery — nothing else clears this. */
-  clearDecryptFailures: () => {
-    set({ decryptFailures: 0, lastDecryptContext: null });
+  /**
+   * Retract a list: it decrypts again.
+   *
+   * This is what makes the warning survivable. An earlier version counted
+   * failures and exposed a clearDecryptFailures() that NOTHING called, so a
+   * user who successfully fixed their key kept being told the app could not
+   * read their lists, with force-quitting as the only way out. A warning you
+   * never retract is its own defect.
+   *
+   * Returns the same object when nothing changed, so subscribers do not
+   * re-render on every successful message.
+   */
+  noteDecryptOk: (listId) => {
+    set((s) =>
+      s.undecryptableLists.includes(listId)
+        ? { undecryptableLists: s.undecryptableLists.filter((l) => l !== listId) }
+        : s,
+    );
   },
 }));

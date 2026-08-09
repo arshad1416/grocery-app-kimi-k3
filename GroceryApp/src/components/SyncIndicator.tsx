@@ -13,20 +13,20 @@ export default function SyncIndicator() {
   const syncState: SyncState = useSyncStore((s) => s.syncState);
   const lastSyncedAt: number | null = useSyncStore((s) => s.lastSyncedAt);
   const errorMessage: string | null = useSyncStore((s) => s.error);
-  const decryptFailures: number = useSyncStore((s) => s.decryptFailures);
+  const undecryptableLists = useSyncStore((s) => s.undecryptableLists);
   const activeTheme = useActiveTheme();
   const theme = activeTheme === 'dark' ? themeColors.dark : themeColors.light;
 
   const { label, color } = syncIndicatorStatus({
     syncState,
     error: errorMessage,
-    decryptFailures,
+    undecryptableLists,
   });
 
   // Don't show a "last synced" time when nothing has ever synced — nor when
   // the data cannot be read, where a fresh timestamp reads as reassurance.
   const timeLabel =
-    lastSyncedAt && syncState !== 'not_configured' && decryptFailures === 0
+    lastSyncedAt && syncState !== 'not_configured' && undecryptableLists.length === 0
       ? new Date(lastSyncedAt).toLocaleTimeString()
       : '';
 

@@ -25,7 +25,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useListStore } from '../state/useListStore';
 import { useFamilyStore } from '../state/useFamilyStore';
-import { useSyncStore } from '../state/useSyncStore';
+import { useSyncStore, syncIndicatorStatus } from '../state/useSyncStore';
 import { type GroceryList, BUILT_IN_CATEGORIES } from '../types';
 import type { RootStackParamList } from '../navigation/deepLinks';
 import { useShareInvite } from '../hooks/useShareInvite';
@@ -70,6 +70,7 @@ export default function HomeScreen({ navigation }: Props) {
 
   const syncState = useSyncStore((s) => s.syncState);
   const syncError = useSyncStore((s) => s.error);
+  const undecryptableLists = useSyncStore((s) => s.undecryptableLists);
 
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -510,14 +511,19 @@ export default function HomeScreen({ navigation }: Props) {
       )
     : activeLists;
 
+  // Derived by the SAME function as SyncIndicator. This screen used to carry
+  // its own copy of the ladder, so it printed a green "Connected" for a device
+  // that could not decrypt a single message — and since Home is the landing
+  // route (App.tsx) and SyncIndicator lives only in GroceryListScreen's header,
+  // the reassuring copy was the one nearly every user saw. Two ladders over one
+  // store is how a status display ends up contradicting itself.
+  const syncStatus = syncIndicatorStatus({ syncState, error: syncError, undecryptableLists });
   const syncDotColor =
     syncState === 'syncing'
       ? theme.accent
-      : syncState === 'error'
-        ? '#EF4444'
-        : syncState === 'offline' || syncState === 'not_configured'
-          ? '#999'
-          : theme.primary;
+      : syncStatus.color === '#10B981'
+        ? theme.primary
+        : syncStatus.color;
 
   const renderListsView = () => {
     if (!loaded || isLoading) {
@@ -840,7 +846,7 @@ export default function HomeScreen({ navigation }: Props) {
           </View>
 
           {/* Sync indicator — tappable when not set up, to reach Pairing */}
-          {syncState === 'not_configured' ? (
+          {syncState === 'not_configured' && undecryptableLists.length === 0 ? (
             <TouchableOpacity
               style={styles.syncBar}
               onPress={() => navigation.navigate('Pairing')}
@@ -856,13 +862,7 @@ export default function HomeScreen({ navigation }: Props) {
             <View style={styles.syncBar}>
               <View style={[styles.syncDot, { backgroundColor: syncDotColor }]} />
               <Text style={[styles.syncText, { color: theme.secondaryText }]}>
-                {syncState === 'syncing'
-                  ? 'Syncing...'
-                  : syncState === 'error'
-                    ? syncError || 'Sync error'
-                    : syncState === 'offline'
-                      ? 'Offline'
-                      : 'Connected'}
+                {syncStatus.label === 'Synced' ? 'Connected' : syncStatus.label}
               </Text>
             </View>
           )}

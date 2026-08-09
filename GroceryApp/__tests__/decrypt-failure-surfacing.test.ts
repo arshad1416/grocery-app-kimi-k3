@@ -36,7 +36,7 @@ import sodium from 'libsodium-wrappers';
 import { YjsWebSocketClient } from '../src/sync/y-websocket';
 import { useSyncStore, syncIndicatorStatus } from '../src/state/useSyncStore';
 import { DecryptFailureError, encrypt, initCrypto } from '../src/crypto';
-import { decryptField, __resetHydrateFailureReporting } from '../src/storage/hydrate';
+import { decryptField } from '../src/storage/hydrate';
 
 const KEY_A = new Uint8Array(32).fill(1);
 const KEY_B = new Uint8Array(32).fill(2);
@@ -48,7 +48,27 @@ const garbledEnvelope = () => ({
   tag: sodium.to_base64(new Uint8Array(16).fill(7), sodium.base64_variants.ORIGINAL),
 });
 
-function makeClient() {
+/** A real, authenticating update envelope for the client's own key. */
+async function realUpdateEnvelope(listId: string) {
+  const nonce = sodium.randombytes_buf(24);
+  const plaintext = new Uint8Array([1, 2, 3]);
+  const combined = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+    plaintext,
+    new TextEncoder().encode(listId),
+    null,
+    nonce,
+    KEY_A,
+  );
+  const ct = combined.slice(0, combined.length - 16);
+  const tag = combined.slice(combined.length - 16);
+  return {
+    ciphertext: sodium.to_base64(ct, sodium.base64_variants.ORIGINAL),
+    iv: sodium.to_base64(nonce, sodium.base64_variants.ORIGINAL),
+    tag: sodium.to_base64(tag, sodium.base64_variants.ORIGINAL),
+  };
+}
+
+async function makeClient() {
   const client = new YjsWebSocketClient({
     url: 'ws://localhost:19998',
     familyId: 'fam',
@@ -61,6 +81,14 @@ function makeClient() {
   client.onRemoteUpdate = (listId) => applied.push(listId);
   // handleMessage is private; driving it directly is the point — it is the
   // function the socket calls, and there is no relay in this suite.
+  // MUST init: y-websocket keeps `sodium` in a module-level lazy binding that
+  // only getSodium() — called from init() — populates. Without this every
+  // decryptUpdate throws "Cannot read properties of null", so a test would
+  // report a decrypt failure for a PERFECTLY VALID envelope and pass for
+  // entirely the wrong reason. The relay does not exist; init tolerates that
+  // (same idiom as ac4-offline.test.ts).
+  await client.init();
+
   const deliver = (msg: unknown) => (client as any).handleMessage(msg);
   return { client, errors, applied, deliver };
 }
@@ -72,16 +100,14 @@ beforeEach(async () => {
     syncState: 'not_configured',
     connectionState: 'disconnected',
     error: null,
-    decryptFailures: 0,
-    lastDecryptContext: null,
+    undecryptableLists: [],
     lastSyncedAt: null,
   });
-  __resetHydrateFailureReporting();
 });
 
 describe('an undecryptable update is reported, not discarded', () => {
   it('reports a DecryptFailureError and does not apply the update', async () => {
-    const { errors, applied, deliver } = makeClient();
+    const { errors, applied, deliver } = await makeClient();
 
     await deliver({ type: 'update', listId: 'list-1', payload: garbledEnvelope() });
 
@@ -92,7 +118,7 @@ describe('an undecryptable update is reported, not discarded', () => {
   });
 
   it('reports an undecryptable sync_request too', async () => {
-    const { client, errors, deliver } = makeClient();
+    const { client, errors, deliver } = await makeClient();
     let answered = false;
     client.onSyncRequest = () => {
       answered = true;
@@ -105,7 +131,7 @@ describe('an undecryptable update is reported, not discarded', () => {
   });
 
   it('does not throw out of handleMessage — one bad list must not kill the socket', async () => {
-    const { deliver, applied } = makeClient();
+    const { deliver, applied } = await makeClient();
 
     await expect(
       deliver({ type: 'update', listId: 'bad', payload: garbledEnvelope() }),
@@ -119,7 +145,7 @@ describe('an undecryptable update is reported, not discarded', () => {
 
 describe('reporting is throttled, because the relay replays 30 days of updates', () => {
   it('reports a given list once, however many messages fail', async () => {
-    const { errors, deliver } = makeClient();
+    const { errors, deliver } = await makeClient();
 
     for (let i = 0; i < 50; i++) {
       await deliver({ type: 'update', listId: 'list-1', payload: garbledEnvelope() });
@@ -131,7 +157,7 @@ describe('reporting is throttled, because the relay replays 30 days of updates',
   });
 
   it('still reports a DIFFERENT list', async () => {
-    const { errors, deliver } = makeClient();
+    const { errors, deliver } = await makeClient();
 
     await deliver({ type: 'update', listId: 'list-1', payload: garbledEnvelope() });
     await deliver({ type: 'update', listId: 'list-1', payload: garbledEnvelope() });
@@ -187,47 +213,64 @@ describe('what the user actually sees', () => {
     // version of that callback set `error` alone and the indicator never
     // showed it.
     useSyncStore.getState().reportSyncError(new DecryptFailureError('list-9'));
-    expect(useSyncStore.getState().decryptFailures).toBe(1);
-    expect(useSyncStore.getState().lastDecryptContext).toBe('list-9');
+    expect(useSyncStore.getState().undecryptableLists).toEqual(['list-9']);
     expect(useSyncStore.getState().syncState).not.toBe('error'); // not the generic channel
     expect(rendered().label).toMatch(/can't read/i);
 
-    useSyncStore.setState({ decryptFailures: 0, lastDecryptContext: null });
+    useSyncStore.setState({ undecryptableLists: [] });
     useSyncStore.getState().reportSyncError(new Error('relay unreachable'));
-    expect(useSyncStore.getState().decryptFailures).toBe(0);
+    expect(useSyncStore.getState().undecryptableLists).toEqual([]);
     expect(useSyncStore.getState().syncState).toBe('error');
     expect(rendered().label).toBe('relay unreachable');
   });
 
-  it('bootstrap delegates to reportSyncError rather than writing the store itself', () => {
-    // Static check, the idiom this suite already uses for wiring it cannot
-    // execute. The failure being guarded is a callback that writes `error`
-    // directly and bypasses the routing above.
-    const src = require('fs').readFileSync(
+  it('bootstrap delegates to reportSyncError and nothing else', () => {
+    // A TRIPWIRE, not a proof — bootstrap needs a relay, a family and a key,
+    // none of which exist here. An earlier version of this used
+    // /onSyncError:[^}]*reportSyncError/ and was defeated two ways: wrapping
+    // the call in `if (Date.now() < 0)`, and adding a dead closure containing
+    // the call while restoring `setState({ error })` beside it. `[^}]*` cannot
+    // cross the `}` either mutant introduces, so both satisfied the regex
+    // while the fix did nothing. So: pin the exact body, and ban the original
+    // bug's shape anywhere in the file.
+    const src: string = require('fs').readFileSync(
       require('path').join(__dirname, '..', 'src/sync/bootstrap.ts'),
       'utf8',
     );
-    expect(src).toMatch(/onSyncError:[^}]*reportSyncError\(err\)/);
-    expect(src).not.toMatch(/onSyncError:[^}]*setState\(\{\s*error:/);
+
+    // The bug this whole change exists to remove — writing the message into a
+    // field the indicator never reads. Banned outright, not just in-callback.
+    // Comments are stripped first: the fix's own comment quotes the old line.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(code).not.toMatch(/setState\(\s*\{\s*error:/);
+
+    const body = src
+      .split('onSyncError: (err: Error) => {')[1]
+      ?.split('},')[0]
+      ?.replace(/\/\/[^\n]*/g, '')
+      ?.replace(/\s+/g, ' ')
+      .trim();
+    // Exact, so an added guard, branch, or extra statement fails.
+    expect(body).toBe('useSyncStore.getState().reportSyncError(err);');
   });
 
   it('renders an ordinary sync error, which used to be invisible', () => {
     // bootstrap wrote `error` without `syncState`, and the label only consults
     // `error` in the error state — so the message went nowhere.
-    expect(syncIndicatorStatus({ syncState: 'idle', error: 'boom', decryptFailures: 0 }).label).toBe(
+    expect(syncIndicatorStatus({ syncState: 'idle', error: 'boom', undecryptableLists: [] }).label).toBe(
       'Synced',
     );
     expect(
-      syncIndicatorStatus({ syncState: 'error', error: 'boom', decryptFailures: 0 }).label,
+      syncIndicatorStatus({ syncState: 'error', error: 'boom', undecryptableLists: [] }).label,
     ).toBe('boom');
   });
 
   it('leaves every non-failing state alone', () => {
     const cases: Array<[Parameters<typeof syncIndicatorStatus>[0], string]> = [
-      [{ syncState: 'idle', error: null, decryptFailures: 0 }, 'Synced'],
-      [{ syncState: 'syncing', error: null, decryptFailures: 0 }, 'Syncing...'],
-      [{ syncState: 'offline', error: null, decryptFailures: 0 }, 'Offline'],
-      [{ syncState: 'not_configured', error: null, decryptFailures: 0 }, 'Local only'],
+      [{ syncState: 'idle', error: null, undecryptableLists: [] }, 'Synced'],
+      [{ syncState: 'syncing', error: null, undecryptableLists: [] }, 'Syncing...'],
+      [{ syncState: 'offline', error: null, undecryptableLists: [] }, 'Offline'],
+      [{ syncState: 'not_configured', error: null, undecryptableLists: [] }, 'Local only'],
     ];
     for (const [state, label] of cases) {
       expect(syncIndicatorStatus(state).label).toBe(label);
@@ -235,15 +278,26 @@ describe('what the user actually sees', () => {
   });
 });
 
-describe('hydrate withholds the field AND says so', () => {
-  it('returns null and records the failure', async () => {
+describe('hydrate withholds the field but does NOT latch the indicator', () => {
+  it('returns null on a wrong key, still failing closed', async () => {
     const envelope = await encrypt('secret value', KEY_A, 'item.name');
-    // Same envelope, different key — the post-wrong-recovery state.
     const out = await decryptField(JSON.stringify(envelope), KEY_B, 'item.name');
+    expect(out).toBeNull();
+  });
 
-    expect(out).toBeNull(); // still fails closed
-    expect(useSyncStore.getState().decryptFailures).toBe(1);
-    expect(rendered().label).not.toBe('Synced');
+  it('does not mark the family unreadable — orphaned rows are EXPECTED here', async () => {
+    // Joining a family legitimately replaces this device's key and nothing
+    // wipes the rows written under the old one; loadItemsFromDB fetches the
+    // whole collection with no familyId filter. So a healthy, syncing device
+    // hits this on every launch. Driving the indicator from it would latch
+    // "can't read your lists" permanently on a device that is fine — a false
+    // alarm worse than the silence, because it teaches the user to ignore the
+    // one warning that matters.
+    const envelope = JSON.stringify(await encrypt('v', KEY_A, 'item.name'));
+    for (let i = 0; i < 20; i++) await decryptField(envelope, KEY_B, 'item.name');
+
+    expect(useSyncStore.getState().undecryptableLists).toEqual([]);
+    expect(rendered().label).not.toMatch(/can't read/i);
   });
 
   it('still returns plaintext and legacy rows untouched', async () => {
@@ -253,25 +307,98 @@ describe('hydrate withholds the field AND says so', () => {
     expect(await decryptField('{"not":"an envelope"}', KEY_A, 'item.name')).toBe(
       '{"not":"an envelope"}',
     );
-    // No false alarm from either.
-    expect(useSyncStore.getState().decryptFailures).toBe(0);
   });
 
-  it('round-trips correctly with the right key, reporting nothing', async () => {
+  it('round-trips correctly with the right key', async () => {
     const envelope = await encrypt('secret value', KEY_A, 'item.name');
     expect(await decryptField(JSON.stringify(envelope), KEY_A, 'item.name')).toBe('secret value');
-    expect(useSyncStore.getState().decryptFailures).toBe(0);
+  });
+});
+
+describe('the warning is retracted when the key starts working', () => {
+  it('a list that decrypts again is removed, with no manual clear', async () => {
+    // The earlier version counted failures and exposed a clearDecryptFailures()
+    // that NOTHING called, so a user who fixed their key kept being told the
+    // app could not read their lists — force-quit was the only way out.
+    useSyncStore.getState().noteDecryptFailure('list-1');
+    expect(rendered().label).toMatch(/can't read/i);
+
+    useSyncStore.getState().noteDecryptOk('list-1');
+    expect(useSyncStore.getState().undecryptableLists).toEqual([]);
+    expect(rendered().label).toBe('Local only');
   });
 
-  it('reports each context once — hydration walks every row', async () => {
-    const envelope = JSON.stringify(await encrypt('v', KEY_A, 'item.name'));
+  it('keeps warning while ANY list is still unreadable', () => {
+    useSyncStore.getState().noteDecryptFailure('list-1');
+    useSyncStore.getState().noteDecryptFailure('list-2');
+    useSyncStore.getState().noteDecryptOk('list-1');
+    expect(useSyncStore.getState().undecryptableLists).toEqual(['list-2']);
+    expect(rendered().label).toMatch(/can't read/i);
+  });
 
-    for (let i = 0; i < 20; i++) await decryptField(envelope, KEY_B, 'item.name');
-    expect(useSyncStore.getState().decryptFailures).toBe(1);
+  it('the socket retracts it end to end once decryption succeeds', async () => {
+    const { client, errors, deliver } = await makeClient();
+    const recovered: string[] = [];
+    client.onDecryptRecovered = (listId) => recovered.push(listId);
 
-    const other = JSON.stringify(await encrypt('v', KEY_A, 'list.description'));
-    await decryptField(other, KEY_B, 'list.description');
-    expect(useSyncStore.getState().decryptFailures).toBe(2);
+    await deliver({ type: 'update', listId: 'list-1', payload: garbledEnvelope() });
+    expect(errors).toHaveLength(1);
+
+    // Same list, now readable (encrypted under the client's own key).
+    const good = await realUpdateEnvelope('list-1');
+    await deliver({ type: 'update', listId: 'list-1', payload: good });
+    expect(recovered).toEqual(['list-1']);
+
+    // …and it re-reports if it breaks again, rather than staying silent.
+    await deliver({ type: 'update', listId: 'list-1', payload: garbledEnvelope() });
+    expect(errors).toHaveLength(2);
+  });
+
+  it('does not fire recovery for a list that never failed', async () => {
+    const { client, deliver } = await makeClient();
+    const recovered: string[] = [];
+    client.onDecryptRecovered = (listId) => recovered.push(listId);
+
+    await deliver({ type: 'update', listId: 'list-1', payload: await realUpdateEnvelope('list-1') });
+    expect(recovered).toEqual([]);
+  });
+});
+
+describe('a throwing listener cannot break the socket or silence the list', () => {
+  it('an onRemoteUpdate throw is NOT relabelled a decryption failure', async () => {
+    // The try must cover only the decrypt. onRemoteUpdate routes into
+    // Y.applyUpdate and a zustand setState whose subscribers run
+    // synchronously, so a bad render came back through the catch and got
+    // wrapped in DecryptFailureError by construction — latching "can't read
+    // your lists" on a device whose key was correct.
+    const { client, errors, deliver } = await makeClient();
+    client.onRemoteUpdate = () => {
+      throw new Error('a subscriber blew up');
+    };
+
+    await deliver({
+      type: 'update',
+      listId: 'list-1',
+      payload: await realUpdateEnvelope('list-1'),
+    }).catch(() => undefined);
+
+    expect(errors.filter((e) => e instanceof DecryptFailureError)).toHaveLength(0);
+    expect(useSyncStore.getState().undecryptableLists).toEqual([]);
+    expect(rendered().label).not.toMatch(/can't read/i);
+  });
+
+  it('an onError throw does not escape, and the list is not silenced forever', async () => {
+    const { client, deliver } = await makeClient();
+    let calls = 0;
+    client.onError = () => {
+      calls++;
+      throw new Error('listener blew up');
+    };
+
+    await expect(
+      deliver({ type: 'update', listId: 'list-1', payload: garbledEnvelope() }),
+    ).resolves.not.toThrow();
+    expect(calls).toBe(1);
   });
 });
 
@@ -281,6 +408,6 @@ function rendered() {
   return syncIndicatorStatus({
     syncState: s.syncState,
     error: s.error,
-    decryptFailures: s.decryptFailures,
+    undecryptableLists: s.undecryptableLists,
   });
 }
