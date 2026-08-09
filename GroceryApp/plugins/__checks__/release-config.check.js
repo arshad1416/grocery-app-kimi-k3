@@ -364,6 +364,47 @@ check('L12: Debug signs against a separate entitlements file using the APNs sand
   );
 });
 
+// ── N1: the Play base plan ID in code must match what the owner is told ─────
+// The shipped "SKU not found" outage was a client that sent an empty offerToken
+// because the handoff doc said Play resolves the offer itself. It does not.
+// Now that PLUS_BASE_PLAN_ID is matched exactly against the Console, the doc and
+// the constant drifting apart silently breaks 100% of Android purchases — and
+// the owner creates the product FROM the doc, so the doc is the live config.
+check('N1: the handoff names the exact base plan ID the code matches on', () => {
+  const src = read('src/config/entitlements.ts');
+  const m = src.match(/PLUS_BASE_PLAN_ID\s*=\s*'([^']+)'/);
+  assert(m, 'PLUS_BASE_PLAN_ID not found in src/config/entitlements.ts');
+  const handoff = read('../audit-package/08-SUBMISSION-HANDOFF.md');
+  // Match the "Base plan ID" table ROW, not the whole file. A bare substring
+  // search passes on any ID the doc merely mentions — and the doc lists several
+  // WRONG names as cautionary examples, so a code-only rename to one of those
+  // slipped straight through the first version of this check.
+  const row = handoff.split('\n').find((l) => /^\|\s*Base plan ID\s*\|/.test(l));
+  assert(row, '08-SUBMISSION-HANDOFF.md has no "Base plan ID" row for the Play product');
+  assert(
+    row.includes(`\`${m[1]}\``),
+    `08-SUBMISSION-HANDOFF.md's Base plan ID row does not name \`${m[1]}\` ` +
+      `(row reads: ${row.trim().slice(0, 100)}). The owner creates the Play product ` +
+      'from this row, so a mismatch fails 100% of Android purchases.'
+  );
+});
+
+check('N1: no doc still claims Play resolves the offer without a token', () => {
+  for (const f of ['../audit-package/08-SUBMISSION-HANDOFF.md', '../GOAL_PROMPT_NOTES.md']) {
+    const body = read(f);
+    // The retraction quotes the false claim on purpose, so only flag it when it
+    // appears as live instruction rather than inside the correction.
+    const live = body
+      .split('\n')
+      .filter((l) => /empty offerToken/.test(l) && !/was false|is false|earlier/i.test(l));
+    assert.strictEqual(
+      live.length, 0,
+      `${f} still instructs the empty-offerToken mechanism, which Play rejects:\n` +
+        live.map((l) => '    ' + l.trim().slice(0, 120)).join('\n')
+    );
+  }
+});
+
 let failed = 0;
 const outstanding = [];
 for (const [name, fn, isPending] of checks) {

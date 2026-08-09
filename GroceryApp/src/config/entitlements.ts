@@ -304,6 +304,178 @@ async function purchaseToRecord(
   };
 }
 
+/** One Google Play subscription offer, as `requestPurchase` wants it. */
+export type GoogleSubscriptionOffer = { sku: string; offerToken: string };
+
+/**
+ * The base plan the paywall price refers to.
+ *
+ * PLUS_PRICE_DISPLAY above is a hardcoded string rendered onto the Subscribe
+ * button, so whatever we buy MUST be this plan. Play returns one entry per
+ * OFFER, not per base plan — add a free trial or intro offer in the Console and
+ * the array grows without any repo change. Taking whatever came first would let
+ * store ordering decide what the user is charged while the button still
+ * advertises the standard price.
+ */
+export const PLUS_BASE_PLAN_ID = 'annual';
+
+/** Raised when the store cannot sell the subscription. `userMessage` is the
+ *  only part safe to show a buyer; `message` carries the operator detail. */
+export class PurchaseUnavailableError extends Error {
+  constructor(
+    message: string,
+    readonly userMessage: string,
+  ) {
+    super(message);
+    this.name = 'PurchaseUnavailableError';
+  }
+}
+
+/**
+ * Look up the Play offer token for PLUS_PRODUCT_ID's base plan.
+ *
+ * Returns `undefined` on iOS, where `subscriptionOffers` is ignored.
+ *
+ * Every failure mode is reported separately because each needs a different
+ * fix and all of them are invisible from the app side otherwise:
+ *
+ *   lookup failed     fetchProducts returned null. Usually the network or a
+ *                     dead Billing connection, NOT a Console problem.
+ *   product missing   the subscription does not exist, is not active, or the
+ *                     Play merchant account is not set up. This is what the
+ *                     store surfaces to users as "SKU not found".
+ *   no offers         Play has the product but will sell this account nothing,
+ *                     usually region or eligibility rules.
+ *   plan unsellable   the base plan we price is missing, in draft, or came
+ *                     back with an empty token.
+ *
+ * Each error carries a separate `userMessage`; the operator detail above is
+ * for the log, since `lastError` is rendered straight into an Alert.
+ *
+ * Exported for testing; `purchasePlus` is the only production caller.
+ */
+export async function resolveAndroidOffers(
+  iap: {
+    fetchProducts: (opts: { skus: string[]; type: 'subs' }) => Promise<unknown>;
+  },
+  platformOverride?: string,
+): Promise<GoogleSubscriptionOffer[] | undefined> {
+  const os = platformOverride ?? (await import('react-native')).Platform.OS;
+  if (os !== 'android') return undefined;
+
+  let raw: unknown;
+  try {
+    raw = await iap.fetchProducts({ skus: [PLUS_PRODUCT_ID], type: 'subs' });
+  } catch (e: any) {
+    // A failed lookup does NOT come back as a value — every failure path in
+    // fetchProducts rethrows createPurchaseError carrying the raw native
+    // message (react-native-iap src/index.ts:955-974). Uncaught, that message
+    // lands verbatim in the buyer's Alert. This call is new to the purchase
+    // path, so without this catch the leak would be new too: airplane mode, or
+    // a device not signed into Play, would show a native billing string.
+    throw new PurchaseUnavailableError(
+      `fetchProducts threw: ${e?.message ?? String(e)}`,
+      'Could not reach the store. Check your connection and try again.',
+    );
+  }
+
+  // The declared return type is `… | null` (types.d.ts:561) even though every
+  // current success path returns an array. Cheap to honour the contract.
+  if (raw == null) {
+    throw new PurchaseUnavailableError(
+      'fetchProducts returned null — the store lookup did not complete.',
+      'Could not reach the store. Check your connection and try again.',
+    );
+  }
+
+  const products = (Array.isArray(raw) ? raw : []) as Array<{
+    id?: string;
+    productStatusAndroid?: 'ok' | 'not-found' | 'no-offers-available' | 'unknown' | null;
+    subscriptionOfferDetailsAndroid?: Array<{
+      basePlanId?: string;
+      offerId?: string | null;
+      offerToken?: string | null;
+    }> | null;
+  }>;
+
+  const product = products.find((p) => p.id === PLUS_PRODUCT_ID);
+
+  // Handle BOTH shapes, because which one Android produces is not pinned down
+  // by anything in this tree: the product may be absent from the array, or
+  // present as a placeholder carrying productStatusAndroid 'not-found' (the
+  // status is optional AND nullable — type-bridge.ts:373, types.d.ts:1163).
+  // An earlier version tested only `!product`, so if the placeholder shape is
+  // the real one, a nonexistent subscription fell through and reported
+  // "activate a base plan" — pointing the operator at the wrong screen.
+  // Checking both costs one comparison and cannot be wrong either way.
+  const status = product?.productStatusAndroid ?? undefined;
+
+  if (!product || status === 'not-found') {
+    throw new PurchaseUnavailableError(
+      `Subscription "${PLUS_PRODUCT_ID}" does not exist in the store. It must be ` +
+        'created AND active in Play Console — which itself requires a Google ' +
+        'Payments merchant account — and the app must be installed from Play ' +
+        'rather than sideloaded.',
+      'This subscription is not available yet. Please try again later.',
+    );
+  }
+
+  if (status === 'no-offers-available') {
+    throw new PurchaseUnavailableError(
+      `Subscription "${PLUS_PRODUCT_ID}" exists but Play reports no offers ` +
+        'available to this account — usually region or eligibility rules.',
+      'This subscription is not available on your account.',
+    );
+  }
+
+  const rawOffers = product.subscriptionOfferDetailsAndroid ?? [];
+  const offers = rawOffers.filter(
+    (o): o is { basePlanId?: string; offerId?: string | null; offerToken: string } =>
+      typeof o?.offerToken === 'string' && o.offerToken.length > 0,
+  );
+
+  // Pick the plan the paywall priced, and within it ONLY the bare base plan, so
+  // the charge matches PLUS_PRICE_DISPLAY on the Subscribe button.
+  //
+  // There is deliberately no `?? forPlan[0]` fallback. Falling back to the
+  // first entry is precisely the store-ordering dependence this function
+  // exists to remove — a Console-side edit alone can reorder the array, and a
+  // promotional offer selected that way bills a price the button never showed.
+  // Refusing to guess turns that into a loud, diagnosable failure instead.
+  //
+  // Play returns one entry per (base plan, offer) pair plus one for the bare
+  // base plan itself, so an active base plan always yields a match. `''` counts
+  // as absent alongside null/undefined: the field's spelling at the native
+  // boundary is not pinned by the .d.ts, and an empty string here would
+  // otherwise make every purchase fail.
+  const forPlan = offers.filter((o) => o.basePlanId === PLUS_BASE_PLAN_ID);
+  const chosen = forPlan.find((o) => o.offerId == null || o.offerId === '');
+
+  if (!chosen) {
+    // Report from rawOffers, not the filtered list. An offer dropped for an
+    // empty token would otherwise vanish from the diagnostic and read as "no
+    // such plan" — erasing the fingerprint of this exact bug arriving from the
+    // store side instead of from our source.
+    const dropped = rawOffers.length - offers.length;
+    const plans = [...new Set(rawOffers.map((o) => o?.basePlanId ?? '?'))].join(', ');
+    throw new PurchaseUnavailableError(
+      `Subscription "${PLUS_PRODUCT_ID}" has no bare base-plan offer for ` +
+        `"${PLUS_BASE_PLAN_ID}" (store returned ${rawOffers.length} offer(s) for ` +
+        `plans: ${plans || 'none'}` +
+        (dropped > 0 ? `; ${dropped} dropped for an empty offerToken` : '') +
+        (forPlan.length > 0
+          ? `; ${forPlan.length} matched the plan but all carried an offerId, ` +
+            'so charging one would not match the advertised price'
+          : '') +
+        `). Check that base plan "${PLUS_BASE_PLAN_ID}" exists and is ACTIVE in ` +
+        'Play Console — the ID must match exactly.',
+      'This subscription is not available right now. Please try again later.',
+    );
+  }
+
+  return [{ sku: PLUS_PRODUCT_ID, offerToken: chosen.offerToken }];
+}
+
 /**
  * Buy PantryRun Plus on this device's store account, then unlock the family.
  * Returns true when the entitlement was granted.
@@ -314,8 +486,27 @@ export async function purchasePlus(): Promise<boolean> {
     const iap = await import('react-native-iap');
     await iap.initConnection();
 
+    // Google Play Billing v5+ requires a REAL offer token, obtained from the
+    // store for the specific base plan being bought. This used to pass the
+    // empty string with a comment claiming Play would resolve the offer in its
+    // own UI — it does not; Billing rejects the request. The token is only
+    // knowable at runtime (Play mints it per product/base-plan), so it has to
+    // be fetched immediately before the purchase rather than hardcoded.
+    //
+    // iOS ignores subscriptionOffers entirely and keys off `apple.sku`.
+    const googleOffers = await resolveAndroidOffers(iap);
+
     const purchase = await new Promise<IapPurchase>((resolve, reject) => {
       const okSub = iap.purchaseUpdatedListener((p: any) => {
+        // Only OUR product. Purchase events emitted while no JS listener was
+        // attached are buffered natively and flushed to the first listener that
+        // attaches, so the first event seen here is not necessarily the one
+        // just requested. Resolving on it would finish the WRONG transaction,
+        // grant a record whose productId fails computeIsPlus, and still return
+        // true — a silent no-unlock — while the real purchase arrives after
+        // both listeners are gone and never gets finishTransaction, which Play
+        // auto-refunds. Ignore and keep waiting.
+        if (p?.productId !== PLUS_PRODUCT_ID) return;
         okSub.remove();
         errSub.remove();
         resolve(p as IapPurchase);
@@ -331,9 +522,7 @@ export async function purchasePlus(): Promise<boolean> {
             apple: { sku: PLUS_PRODUCT_ID },
             google: {
               skus: [PLUS_PRODUCT_ID],
-              // Single base plan (owner creates exactly one); Play resolves
-              // the offer in its own UI when the token is not pre-fetched.
-              subscriptionOffers: [{ sku: PLUS_PRODUCT_ID, offerToken: '' }],
+              subscriptionOffers: googleOffers,
             },
           },
           type: 'subs',
@@ -355,7 +544,15 @@ export async function purchasePlus(): Promise<boolean> {
     const message = err?.message ?? String(err);
     // User cancellation is not an error state worth surfacing loudly.
     const cancelled = /cancel/i.test(message);
-    useEntitlementStore.setState({ lastError: cancelled ? null : message });
+    // `lastError` is rendered straight into Alert.alert('Purchase failed', …) by
+    // GroceryListScreen:126/137 and SettingsScreen:711/727, so it has to read as
+    // something a buyer can act on. Store-configuration failures carry a
+    // separate userMessage; the operator detail stays in the log, where it is
+    // actually useful. Telling a customer to "activate a base plan in Play
+    // Console" is a support ticket, not an error message.
+    const shown =
+      err instanceof PurchaseUnavailableError ? err.userMessage : message;
+    useEntitlementStore.setState({ lastError: cancelled ? null : shown });
     if (!cancelled) console.warn('[entitlements] purchase failed:', message);
     return false;
   } finally {
@@ -384,7 +581,13 @@ export async function restorePlus(): Promise<boolean> {
     return true;
   } catch (err: any) {
     const message = err?.message ?? String(err);
-    useEntitlementStore.setState({ lastError: message });
+    // Same modal, same rule as purchasePlus: the buyer gets the actionable
+    // half, the operator detail goes to the log.
+    const shown =
+      err instanceof PurchaseUnavailableError
+        ? err.userMessage
+        : 'Could not reach the store. Check your connection and try again.';
+    useEntitlementStore.setState({ lastError: shown });
     console.warn('[entitlements] restore failed:', message);
     return false;
   } finally {

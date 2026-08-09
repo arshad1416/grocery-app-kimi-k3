@@ -270,7 +270,27 @@ first IAP must be submitted WITH a version review.
 |---|---|
 | Product ID | `pantryrun_plus_annual` |
 | Name | `PantryRun Plus` |
-| Base plan ID | `annual` — exactly ONE base plan (auto-renewing, 1 year, $14.99); the client passes an empty offerToken and relies on the single base plan |
+| Base plan ID | **`annual`** — must match the code constant `PLUS_BASE_PLAN_ID` in `GroceryApp/src/config/entitlements.ts` EXACTLY. Auto-renewing, 1 year, $14.99. Must be **ACTIVE**, not draft. |
+
+> **The base plan ID is load-bearing — read this before creating the product.**
+>
+> An earlier version of this handoff said "the client passes an empty offerToken
+> and relies on the single base plan." **That is false and it was a shipped bug.**
+> Google Play Billing v5+ *rejects* a subscription purchase whose offer carries
+> no token; the token is minted by Play per (product, base plan) and can only be
+> fetched at runtime. The client now fetches it and selects the offer whose
+> `basePlanId` equals `PLUS_BASE_PLAN_ID`.
+>
+> Consequences for whoever creates this product:
+> - Name the base plan anything other than `annual` — `annual-plan`, `yearly`,
+>   `Annual` — and **100% of Android purchases fail** with "This subscription is
+>   not available right now." The comparison is exact and case-sensitive.
+> - Leave the base plan in **draft** and every purchase fails the same way.
+> - The client deliberately refuses to fall back to a promotional offer, because
+>   that would bill a price the Subscribe button never advertised. A base plan
+>   with only promo offers attached and no bare base plan will not sell.
+> - If you must rename the base plan, change `PLUS_BASE_PLAN_ID` in
+>   `entitlements.ts` in the same change and ship a new build.
 | Benefits/description | same copy as Apple's localization above |
 
 ### 5.2 Test accounts (needed before the purchase test cases can run)
