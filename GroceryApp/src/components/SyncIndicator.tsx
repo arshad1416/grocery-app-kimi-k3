@@ -5,7 +5,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import type { SyncState } from '../types';
-import { useSyncStore } from '../state/useSyncStore';
+import { useSyncStore, syncIndicatorStatus } from '../state/useSyncStore';
 import { useActiveTheme } from '../state/useThemeStore';
 import { themeColors } from './groceryTheme';
 
@@ -13,37 +13,20 @@ export default function SyncIndicator() {
   const syncState: SyncState = useSyncStore((s) => s.syncState);
   const lastSyncedAt: number | null = useSyncStore((s) => s.lastSyncedAt);
   const errorMessage: string | null = useSyncStore((s) => s.error);
+  const decryptFailures: number = useSyncStore((s) => s.decryptFailures);
   const activeTheme = useActiveTheme();
   const theme = activeTheme === 'dark' ? themeColors.dark : themeColors.light;
 
-  const color =
-    syncState === 'syncing'
-      ? '#FF9800'
-      : syncState === 'error'
-        ? '#f44336'
-        : syncState === 'offline'
-          ? '#999'
-          : syncState === 'not_configured'
-            ? '#999'
-            : '#10B981';
+  const { label, color } = syncIndicatorStatus({
+    syncState,
+    error: errorMessage,
+    decryptFailures,
+  });
 
-  // In the error state, prefer the specific message set by whoever reported
-  // it (e.g. "Couldn't save recent changes to this device" for a failed local
-  // write) — a blanket "Sync error" misleads when the failure isn't sync.
-  const label =
-    syncState === 'syncing'
-      ? 'Syncing...'
-      : syncState === 'error'
-        ? errorMessage || 'Sync error'
-        : syncState === 'offline'
-          ? 'Offline'
-          : syncState === 'not_configured'
-            ? 'Local only'
-            : 'Synced';
-
-  // Don't show a "last synced" time when nothing has ever synced.
+  // Don't show a "last synced" time when nothing has ever synced — nor when
+  // the data cannot be read, where a fresh timestamp reads as reassurance.
   const timeLabel =
-    lastSyncedAt && syncState !== 'not_configured'
+    lastSyncedAt && syncState !== 'not_configured' && decryptFailures === 0
       ? new Date(lastSyncedAt).toLocaleTimeString()
       : '';
 

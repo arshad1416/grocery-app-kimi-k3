@@ -23,7 +23,7 @@ async function getSodium(): Promise<any> {
 }
 import * as Y from 'yjs';
 import type { EncryptedData } from '../types';
-import { encrypt, decrypt } from '../crypto';
+import { encrypt, decrypt, DecryptFailureError } from '../crypto';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -97,6 +97,8 @@ export class YjsWebSocketClient {
   private state: ConnectionState = 'disconnected';
   private offlineQueue: OfflineEntry[] = [];
   private encryptKey: Uint8Array;
+  /** Lists already reported as undecryptable — see reportDecryptFailure. */
+  private readonly reportedDecryptFailures = new Set<string>();
   private ready = false;
   private disposed = false;
   private authPending = true; // true until auth_ack received
@@ -459,15 +461,27 @@ export class YjsWebSocketClient {
             const stateVector = this.decryptUpdate(data.payload, data.listId);
             this.onSyncRequest?.(data.listId, stateVector, data.deviceId ?? '');
           } catch (err) {
-            console.warn('YjsWebSocket: failed to decrypt sync_request', err);
+            // Same cause as the 'update' case, same reporting. It used to warn
+            // to the console only, which no user has ever read.
+            this.reportDecryptFailure(data.listId, err);
           }
         }
         break;
       }
       case 'update': {
         if (data.listId && data.payload) {
-          const decrypted = this.decryptUpdate(data.payload, data.listId);
-          this.onRemoteUpdate?.(data.listId, decrypted);
+          // MUST catch locally. Without this the throw unwound to the generic
+          // onmessage handler, which console.warn'd it and moved on — so a
+          // device whose key does not match the family's silently discarded
+          // every incoming update while the UI kept saying "Synced". That is
+          // the worst possible presentation of this failure: the user believes
+          // they are seeing the family's lists and they are not.
+          try {
+            const decrypted = this.decryptUpdate(data.payload, data.listId);
+            this.onRemoteUpdate?.(data.listId, decrypted);
+          } catch (err) {
+            this.reportDecryptFailure(data.listId, err);
+          }
         }
         break;
       }
@@ -541,6 +555,24 @@ export class YjsWebSocketClient {
    * Decrypt an encrypted Yjs update using the listId as AAD.
    * The listId must match what was used during encryption.
    */
+  /**
+   * Report a ciphertext that failed authentication, at most once per list.
+   *
+   * Throttled per list because the relay replays its entire retained history
+   * on connect — up to 30 days of updates. A device with the wrong key fails
+   * on every single one, so reporting per message would mean thousands of
+   * identical console lines and store writes on each reconnect, which is its
+   * own outage. One report per list is enough to change what the UI says, and
+   * the count still accumulates for anyone reading it.
+   */
+  private reportDecryptFailure(listId: string, cause: unknown): void {
+    const err = new DecryptFailureError(listId, cause);
+    if (this.reportedDecryptFailures.has(listId)) return;
+    this.reportedDecryptFailures.add(listId);
+    console.warn('[sync]', err.message, cause);
+    this.onError?.(err);
+  }
+
   private decryptUpdate(data: EncryptedData, listId: string): Uint8Array {
     const nonce = sodium.from_base64(data.iv, sodium.base64_variants.ORIGINAL);
     const tag = sodium.from_base64(data.tag, sodium.base64_variants.ORIGINAL);

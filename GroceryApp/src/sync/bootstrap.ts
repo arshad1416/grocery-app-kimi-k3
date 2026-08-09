@@ -128,8 +128,12 @@ export async function bootstrapSync(): Promise<'no-key' | 'local-only' | 'connec
       onConnectionChange: (state: ConnectionState) => {
         useSyncStore.getState().setConnectionState(state);
       },
+      // Routing lives in the store (reportSyncError) so it can be tested. This
+      // callback previously did `setState({ error: err.message })`, which the
+      // indicator never rendered — it only consults `error` when syncState is
+      // 'error'. Every sync error went into a field nothing displayed.
       onSyncError: (err: Error) => {
-        useSyncStore.setState({ error: err.message });
+        useSyncStore.getState().reportSyncError(err);
       },
       onRemoteItemsUpdate: (listId, items) => {
         // Refresh the visible list when a family member's update arrives.

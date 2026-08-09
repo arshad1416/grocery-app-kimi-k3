@@ -108,6 +108,15 @@ export async function decryptField(
   try {
     return await decrypt(parsed, key, context);
   } catch (err) {
+    // Failing closed was already right. What was missing is that the field
+    // just disappeared from the user's list with no explanation anywhere they
+    // would look — the console message below has never been read by a user.
+    //
+    // These rows are written by persistItem under the family key, including
+    // rows that arrived from other devices (sync-manager.ts:299), so a failure
+    // here means the same thing it means at the socket: this device's key does
+    // not match its own data.
+    await reportHydrateDecryptFailure(context);
     console.error(
       `[hydrate] AEAD authentication failed for field context "${context}". ` +
         'This means the wrong key, or corrupted/tampered ciphertext — NOT that ' +
@@ -117,6 +126,41 @@ export async function decryptField(
     );
     return null;
   }
+}
+
+/** Contexts already reported this session — see reportHydrateDecryptFailure. */
+const reportedContexts = new Set<string>();
+
+/**
+ * Surface a hydrate decryption failure in the UI, at most once per context.
+ *
+ * Throttled because hydration walks every row: a wrong key fails on all of
+ * them, so an unthrottled report would be one store write per field per item.
+ * Reported once per context ('item.name', 'list.description', …), which is
+ * enough to change what the indicator says.
+ *
+ * The import is dynamic so storage/ takes no static dependency on state/,
+ * which would close a cycle through useSyncStore -> sync-manager. It is
+ * AWAITED rather than fired and forgotten: the caller is already async, the
+ * module is cached after the first hit, and a report that lands a tick later
+ * than the null it explains is a race every caller would have to know about.
+ * Errors are swallowed — failing to report must never turn a withheld field
+ * into a thrown hydrate.
+ */
+async function reportHydrateDecryptFailure(context: string): Promise<void> {
+  if (reportedContexts.has(context)) return;
+  reportedContexts.add(context);
+  try {
+    const { useSyncStore } = await import('../state/useSyncStore');
+    useSyncStore.getState().noteDecryptFailure(context);
+  } catch {
+    // Reporting is best-effort; the withheld field is the guarantee.
+  }
+}
+
+/** Test-only: forget which contexts have been reported. */
+export function __resetHydrateFailureReporting(): void {
+  reportedContexts.clear();
 }
 
 // ─── Write-through: encrypt and persist ───────────────────────────────────────

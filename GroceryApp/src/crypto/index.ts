@@ -233,6 +233,31 @@ export async function encrypt(
  * @param context - AAD context string (must match what was used during encryption).
  * @returns The original plaintext string.
  */
+/**
+ * A ciphertext failed its authentication tag.
+ *
+ * This is NEVER a transient error and reconnecting never fixes it. Poly1305
+ * rejects with probability ~1-2^-128 unless the key is genuinely wrong, so in
+ * practice it means exactly one thing: the key this device holds is not the
+ * key the data was written under. Corruption and tampering land here too, but
+ * they are far rarer than a key mismatch.
+ *
+ * It exists as a distinct type because the UI has to tell it apart from a
+ * dropped socket. "Offline" resolves itself; this does not, and telling a user
+ * their lists are "Syncing…" while every message fails to decrypt is the
+ * failure mode this type is here to prevent.
+ */
+export class DecryptFailureError extends Error {
+  constructor(
+    /** Where it happened — a listId, or a field context like 'item.name'. */
+    readonly context: string,
+    override readonly cause?: unknown,
+  ) {
+    super(`Decryption failed for "${context}" — this device's key does not match the data.`);
+    this.name = 'DecryptFailureError';
+  }
+}
+
 export async function decrypt(
   data: EncryptedData,
   key: Uint8Array,
