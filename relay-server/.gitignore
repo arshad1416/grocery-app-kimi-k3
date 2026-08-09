@@ -7,3 +7,13 @@ test-relay-state*.json
 used-tokens.json
 relay-docs.json
 data/
+
+# Per-suite scratch state. The suites write enrollment records, spent invite
+# signatures and OAuth pairing sessions into these; none of it belongs in a
+# commit. Matched by SHAPE rather than by listing each name, because the
+# previous list-of-names approach silently missed __relay_auth_test_state_*__
+# the moment a new suite was added — the file showed up untracked in `git
+# status` and was one `git add -A` away from being committed.
+__*__.json
+__*__*.json
+
