@@ -101,6 +101,15 @@ export const useSyncStore = create<SyncStateShape>((set, get) => ({
   undecryptableLists: [],
 
   setSyncState: (syncState) => {
+    // Going local-only retracts the warning. bootstrapSync sets this when the
+    // device has no relay, family or key, which is exactly the state a user
+    // reaches by LEAVING a family — at which point "can't read family lists"
+    // is stale, and worse, it would suppress the tappable "tap to set up
+    // sharing" row on Home and leave a dead one in its place.
+    if (syncState === 'not_configured') {
+      set({ syncState, undecryptableLists: [] });
+      return;
+    }
     set({ syncState });
   },
 

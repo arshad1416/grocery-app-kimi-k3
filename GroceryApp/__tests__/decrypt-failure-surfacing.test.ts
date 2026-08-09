@@ -328,6 +328,19 @@ describe('the warning is retracted when the key starts working', () => {
     expect(rendered().label).toBe('Local only');
   });
 
+  it('going local-only retracts it — leaving a family makes it stale', () => {
+    // bootstrapSync sets 'not_configured' when there is no relay/family/key,
+    // which is where a user lands after leaving a family. A stale warning
+    // there would also cost them Home's tappable "set up sharing" row, since
+    // that branch keys off not_configured.
+    useSyncStore.getState().noteDecryptFailure('list-1');
+    expect(rendered().label).toMatch(/can't read/i);
+
+    useSyncStore.getState().setSyncState('not_configured');
+    expect(useSyncStore.getState().undecryptableLists).toEqual([]);
+    expect(rendered().label).toBe('Local only');
+  });
+
   it('keeps warning while ANY list is still unreadable', () => {
     useSyncStore.getState().noteDecryptFailure('list-1');
     useSyncStore.getState().noteDecryptFailure('list-2');

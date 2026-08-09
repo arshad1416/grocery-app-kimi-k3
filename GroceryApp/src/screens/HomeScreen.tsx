@@ -846,7 +846,7 @@ export default function HomeScreen({ navigation }: Props) {
           </View>
 
           {/* Sync indicator — tappable when not set up, to reach Pairing */}
-          {syncState === 'not_configured' && undecryptableLists.length === 0 ? (
+          {syncState === 'not_configured' ? (
             <TouchableOpacity
               style={styles.syncBar}
               onPress={() => navigation.navigate('Pairing')}
