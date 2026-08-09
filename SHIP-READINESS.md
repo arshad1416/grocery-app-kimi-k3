@@ -8,7 +8,7 @@ deployable hardened relay.** grocery-app retired.
 | Target | State | What remains |
 |---|---|---|
 | **Relay** | **Ready to deploy** | Nothing in the code. Needs a host + TLS. |
-| **Android** | **Ready to build and submit** | Confirm the remote versionCode seeds at 31 on the first build. |
+| **Android** | **Built and signed — awaiting upload** | AAB ready at versionCode 32; needs the Play service-account key or a manual Console upload. |
 | **iOS** | **Code ready; blocked on Apple credentials** | EAS holds no iOS distribution creds — see §4. |
 
 Every automated gate passes:
@@ -66,29 +66,30 @@ Note the APK built here is **debug-signed** (the release signing config falls ba
 keystore when no upload key is configured) and is therefore not submittable. Build through EAS with
 the real upload key.
 
-## 3. Owner actions — 3 outstanding
+## 3. Owner actions — 2 outstanding (was 3; version counters now done)
 
 `cd GroceryApp && npm run check:release` is the machine-checkable form; it runs in CI on every push
 and fails only on regression, reporting these as PENDING.
 
-**a. EAS version counter — iOS DONE, Android pending one command.**
-Checked against EAS on 2026-08-08 with the authenticated `shiftlogichq` session. The project had
-**no remote versions configured at all**. The first `eas build --platform ios` initialised it from
-the native value:
+**a. EAS version counters — DONE, both platforms.** Verified against a live EAS session.
+The project had no remote versions configured at all; both are now seeded from the native code:
 
 ```
-No remote versions are configured for this project, buildNumber will be
-initialized based on the value from the local project.
-- Initializing buildNumber with 31.   ✔
+eas build:version:get --platform android   ->  Android versionCode - 32
+eas build:version:get --platform ios       ->  iOS buildNumber    - 31
 ```
 
-`build:version:get --platform ios` now reports **31**, so the next iOS build is 32. Android still
-reports "No remote versions are configured" and will seed the same proven way from
-`android/app/build.gradle` on its first EAS build. Confirm before submitting:
+A production Android build was run on 2026-08-09 and incremented 31 -> 32 on its own, using the
+EXISTING keystore (`Build Credentials U2HMOIJrkW (default)`) — the same one that signed live v31, so
+there is no signature-mismatch risk. **A submittable AAB now exists:**
 
-```bash
-npx eas-cli build:version:get --platform android    # expect 31 after the first build
 ```
+AAB    https://expo.dev/artifacts/eas/C-iuuKIl43luvCo5Vuqs7PUFBaLiaexPrl8scxdfSMk.aab
+build  6ca6e8d9-ece9-44c3-b5f4-1a913d41cfba   (versionCode 32, FINISHED, production profile)
+```
+
+Every locally-built APK before this fell back to the debug keystore and would have been rejected at
+ingest. This is the first artifact Play will actually accept.
 
 **Correction worth knowing:** with `appVersionSource: remote` AND committed native directories, EAS
 **ignores `app.json`** and reads the native code — it says so explicitly. The seed that matters is
@@ -96,10 +97,30 @@ npx eas-cli build:version:get --platform android    # expect 31 after the first 
 version of the release check guarded `app.json`, which EAS never reads; it now guards the native
 values and was verified to fail when they are lowered.
 
-**b. Provide the Play service-account key.** `eas.json` points at
-`./credentials/play-service-account.json`. Now gitignored (`credentials/`,
-`*play-service-account*.json`) — that gap was found and closed here. Provision it locally; never
-commit it.
+**b. Provide the Play service-account key — the ONLY thing blocking the Android upload.**
+`eas submit` was attempted on 2026-08-09 against build 6ca6e8d9 and failed on exactly this:
+
+```
+File ./credentials/play-service-account.json doesn't exist.
+A Google Service Account JSON key is required to upload your app to Google Play Store.
+```
+
+EAS does NOT hold this credential server-side (unlike the keystore, which it does). Two ways to
+finish, both one step:
+
+1. Download the AAB from the link in (a) and upload it to the internal track in the Play Console.
+   No service account needed at all.
+2. Create a service account with the **Release Manager** role in Play Console -> Users and
+   permissions, download the JSON to `GroceryApp/credentials/play-service-account.json` (already
+   gitignored — verified with `git check-ignore`), then:
+
+```bash
+cd GroceryApp
+npx eas-cli submit --platform android --profile production --id 6ca6e8d9-ece9-44c3-b5f4-1a913d41cfba
+```
+
+Note `submit.production.android.track` is `internal`, deliberately — promote to production from the
+Console after verifying. Never commit the key.
 
 **c. Fill in the Apple IDs.** `eas.json` `submit.production.ios` still has literal
 `REPLACE_WITH_APP_STORE_CONNECT_APP_ID` / `REPLACE_WITH_APPLE_TEAM_ID`. These are account facts
