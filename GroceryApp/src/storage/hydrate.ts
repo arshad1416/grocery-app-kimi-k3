@@ -137,82 +137,55 @@ export async function decryptField(
   }
 }
 
-// ─── Family scoping ──────────────────────────────────────────────────────────
+// ─── Scoping hydration to data this device can actually read ─────────────────
 
 /**
- * Values that appear in the `family_id` column but do not identify a family.
+ * Why this is NOT a `family_id` filter.
  *
- * The column was never wired to the real family identity. Every list this app
- * has ever written carries the literal 'default-family', because HomeScreen
- * resolves it from the family_members TABLE and `addMember` has zero callers,
- * so that table is always empty. Items are worse: AddItemSheet and
- * ItemEditScreen fall through to '' for the first item in a list, and every
- * later item copies it from the first.
+ * The obvious fix for "a joined device hydrates rows written under its old
+ * key" is to keep only rows whose family_id matches the current family. Two
+ * things make that wrong, and the second is the dangerous one:
  *
- * So a filter of `family_id === currentFamilyId` — the obvious fix — would
- * hide 100% of every existing user's lists and items. These rows are adopted
- * into the current family on read instead, which is safe precisely because
- * they cannot belong to any OTHER family: no code path has ever written a real
- * familyId here.
+ *  1. The column has never held a real family id. Lists always carry the
+ *     literal 'default-family' (HomeScreen falls back to it because
+ *     `addMember` has zero callers, so the family_members table is always
+ *     empty); items always carry ''. So a strict match hides EVERYTHING.
+ *
+ *  2. The familyId is not stable, so making the column accurate would be
+ *     worse than leaving it wrong. `ensureFamilyMembership` mints a fresh
+ *     UUID whenever the membership is missing, and it goes missing in ways
+ *     the user never chose: expo-secure-store DELETES entries whose Keystore
+ *     key is gone (SecureStoreModule.kt — "occurs when the app is
+ *     reinstalled"), which Android's allowBackup makes reachable on a device
+ *     transfer, and `createFamilyInviteLink` re-founds a family after an
+ *     unpair (invite-link.ts:69-73). `recoverFromPhrase` restores the master
+ *     KEY but never the familyId. So a user who recovers correctly, with data
+ *     that decrypts perfectly, gets a new familyId — and every row tagged
+ *     with the old one would be hidden forever.
+ *
+ * Decryptability is the honest predicate, and it is what the problem was
+ * actually about. A row whose ciphertext fails Poly1305 under the current key
+ * is unusable no matter which family it claims; a row that decrypts is the
+ * user's, whatever its family_id says. It also cannot be destabilised by an
+ * identifier regenerating, because it does not consult one.
  */
-const LEGACY_FAMILY_IDS: ReadonlySet<string> = new Set(['', 'default-family']);
-
-const isLegacyFamilyId = (v: unknown): boolean =>
-  v == null || (typeof v === 'string' && LEGACY_FAMILY_IDS.has(v));
-
-/**
- * Keep only rows belonging to this family, adopting legacy-scoped ones.
- *
- * A row is excluded ONLY when it carries a real familyId that is not ours —
- * which is exactly the join-orphan case this exists for: joining a family
- * replaces the device key, and the rows written under the old key are dead
- * weight that fails to decrypt on every launch forever.
- *
- * `familyId === null` means membership does not exist yet (mid-provisioning,
- * or a cold-start race). Everything is kept in that case, deliberately: a
- * device that has not yet resolved who it is must not blank the user's lists.
- * Excluding on an unknown identity is the failure mode that looks like total
- * data loss.
- */
-function scopeToFamily<T extends { familyId?: unknown }>(
-  records: readonly T[],
-  familyId: string | null,
+function dropUnreadable<T>(
+  rows: readonly (T | null)[],
   label: string,
-): { kept: T[]; dropped: number } {
-  if (!familyId) return { kept: [...records], dropped: 0 };
-
-  const kept = records.filter(
-    (r) => r.familyId === familyId || isLegacyFamilyId(r.familyId),
-  );
-  const dropped = records.length - kept.length;
+): T[] {
+  const kept = rows.filter((r): r is T => r !== null);
+  const dropped = rows.length - kept.length;
   if (dropped > 0) {
-    // Say it out loud. Filtering makes rows DISAPPEAR, which from the user's
-    // side is indistinguishable from data loss — and a silent disappearance is
-    // the exact class of failure the rest of this work removed.
+    // Never silent. Rows vanishing is indistinguishable from data loss unless
+    // something says otherwise.
     console.warn(
-      `[hydrate] ${label}: ignored ${dropped} row(s) belonging to a different ` +
-        `family. This is expected on a device that joined a family — the rows ` +
-        `written before the join are encrypted under the old key and can never ` +
-        `be read again.`,
+      `[hydrate] ${label}: skipped ${dropped} row(s) that could not be ` +
+        'decrypted with this device\'s key. Expected on a device that joined a ' +
+        'family — rows written before the join were encrypted under the old ' +
+        'key and can never be read again.',
     );
   }
-  return { kept, dropped };
-}
-
-/**
- * The familyId to stamp on rows this device writes.
- *
- * Reads through to the membership in SecureStore — the ONLY place a real
- * familyId has ever lived. Returns null when there is no membership yet, in
- * which case the caller keeps whatever it was given rather than inventing one.
- */
-async function currentFamilyId(): Promise<string | null> {
-  try {
-    const { getFamilyId } = await import('../identity/family');
-    return await getFamilyId();
-  } catch {
-    return null;
-  }
+  return kept;
 }
 
 // ─── Write-through: encrypt and persist ───────────────────────────────────────
@@ -235,16 +208,10 @@ export async function persistItem(
     ? await encryptField(item.notes, key, FIELD_CONTEXTS.GROCERY_ITEM_NOTES)
     : null;
 
-  // Resolved before the write block: create() takes a synchronous callback.
-  const stampedFamilyId = (await currentFamilyId()) ?? item.familyId;
-
   const existing = await collection.query(Q.where('id', item.id)).fetch();
   await getDatabase().write(async () => {
     if (existing.length > 0) {
       await existing[0].update((record: any) => {
-        // Adopt on update too, so a legacy row corrects itself the first time
-        // it is touched rather than staying ambiguous forever.
-        if (isLegacyFamilyId(record.familyId)) record.familyId = stampedFamilyId;
         record.name = encryptedName;
         record.notes = encryptedNotes;
         record.quantity = item.quantity;
@@ -263,7 +230,7 @@ export async function persistItem(
         record.listId = item.listId;
         // Stamp the REAL familyId, so new rows are correctly scoped even
         // though every caller still hands us '' (see LEGACY_FAMILY_IDS).
-        record.familyId = stampedFamilyId;
+        record.familyId = item.familyId;
         record.name = encryptedName;
         record.quantity = item.quantity;
         record.unit = item.unit;
@@ -304,13 +271,10 @@ export async function persistList(
     ? await encryptField(list.storePreference, key, FIELD_CONTEXTS.GROCERY_LIST_STORE_PREFERENCE)
     : null;
 
-  const stampedFamilyId = (await currentFamilyId()) ?? list.familyId;
-
   const existing = await collection.query(Q.where('id', list.id)).fetch();
   await getDatabase().write(async () => {
     if (existing.length > 0) {
       await existing[0].update((record: any) => {
-        if (isLegacyFamilyId(record.familyId)) record.familyId = stampedFamilyId;
         record.name = encryptedName;
         record.description = encryptedDesc;
         record.storePreference = encryptedStore;
@@ -324,7 +288,7 @@ export async function persistList(
     } else {
       await collection.create((record: any) => {
         record._raw.id = list.id;
-        record.familyId = stampedFamilyId;
+        record.familyId = list.familyId;
         record.name = encryptedName;
         record.description = encryptedDesc;
         record.storePreference = encryptedStore;
@@ -354,13 +318,10 @@ export async function persistMember(
     FIELD_CONTEXTS.FAMILY_MEMBER_DISPLAY_NAME,
   );
 
-  const stampedFamilyId = (await currentFamilyId()) ?? member.familyId;
-
   const existing = await collection.query(Q.where('id', member.id)).fetch();
   await getDatabase().write(async () => {
     if (existing.length > 0) {
       await existing[0].update((record: any) => {
-        if (isLegacyFamilyId(record.familyId)) record.familyId = stampedFamilyId;
         record.displayName = encryptedDisplayName;
         record.avatarUrl = member.avatarUrl ?? null;
         record.isActive = member.isActive;
@@ -373,7 +334,7 @@ export async function persistMember(
     } else {
       await collection.create((record: any) => {
         record._raw.id = member.id;
-        record.familyId = stampedFamilyId;
+        record.familyId = member.familyId;
         record.displayName = encryptedDisplayName;
         record.avatarUrl = member.avatarUrl ?? null;
         record.isActive = member.isActive;
@@ -439,7 +400,7 @@ export async function loadItemsFromDB(
           return kept;
         })();
 
-  const items: GroceryItem[] = [];
+  const items: (GroceryItem | null)[] = [];
 
   for (const record of records) {
     const name = await decryptField(
@@ -453,11 +414,16 @@ export async function loadItemsFromDB(
       FIELD_CONTEXTS.GROCERY_ITEM_NOTES,
     );
 
+    if (name === null) {
+      items.push(null);
+      continue;
+    }
+
     items.push({
       id: (record as any).id,
       listId: (record as any).listId,
       familyId: (record as any).familyId,
-      name: name ?? '',
+      name,
       quantity: (record as any).quantity,
       unit: (record as any).unit,
       category: (record as any).category,
@@ -475,7 +441,7 @@ export async function loadItemsFromDB(
     });
   }
 
-  return items;
+  return dropUnreadable(items, 'items');
 }
 
 /**
@@ -483,13 +449,8 @@ export async function loadItemsFromDB(
  */
 export async function loadListsFromDB(key: Uint8Array): Promise<GroceryList[]> {
   const collection = getDatabase().get('grocery_lists');
-  const all = await collection.query().fetch();
-  const { kept: records } = scopeToFamily(
-    all as unknown as Array<{ familyId?: unknown }>,
-    await currentFamilyId(),
-    'lists',
-  ) as unknown as { kept: typeof all };
-  const lists: GroceryList[] = [];
+  const records = await collection.query().fetch();
+  const lists: (GroceryList | null)[] = [];
 
   for (const record of records) {
     const name = await decryptField(
@@ -508,10 +469,19 @@ export async function loadListsFromDB(key: Uint8Array): Promise<GroceryList[]> {
       FIELD_CONTEXTS.GROCERY_LIST_STORE_PREFERENCE,
     );
 
+    // `name` is the only field guaranteed encrypted on every list, so it is
+    // the decryptability probe. null means the AEAD tag rejected it — the row
+    // was written under a different key and is gone for good. It used to be
+    // coerced to '' and rendered as a nameless list the user could tap into.
+    if (name === null) {
+      lists.push(null);
+      continue;
+    }
+
     lists.push({
       id: (record as any).id,
       familyId: (record as any).familyId,
-      name: name ?? '',
+      name,
       description: description ?? undefined,
       storePreference: storePreference ?? undefined,
       isActive: (record as any).isActive,
@@ -524,7 +494,7 @@ export async function loadListsFromDB(key: Uint8Array): Promise<GroceryList[]> {
     });
   }
 
-  return lists;
+  return dropUnreadable(lists, 'lists');
 }
 
 /**
@@ -532,13 +502,8 @@ export async function loadListsFromDB(key: Uint8Array): Promise<GroceryList[]> {
  */
 export async function loadMembersFromDB(key: Uint8Array): Promise<FamilyMember[]> {
   const collection = getDatabase().get('family_members');
-  const all = await collection.query().fetch();
-  const { kept: records } = scopeToFamily(
-    all as unknown as Array<{ familyId?: unknown }>,
-    await currentFamilyId(),
-    'members',
-  ) as unknown as { kept: typeof all };
-  const members: FamilyMember[] = [];
+  const records = await collection.query().fetch();
+  const members: (FamilyMember | null)[] = [];
 
   for (const record of records) {
     const displayName = await decryptField(
@@ -547,10 +512,15 @@ export async function loadMembersFromDB(key: Uint8Array): Promise<FamilyMember[]
       FIELD_CONTEXTS.FAMILY_MEMBER_DISPLAY_NAME,
     );
 
+    if (displayName === null) {
+      members.push(null);
+      continue;
+    }
+
     members.push({
       id: (record as any).id,
       familyId: (record as any).familyId,
-      displayName: displayName ?? '',
+      displayName,
       avatarUrl: (record as any).avatarUrl,
       isActive: (record as any).isActive,
       isDeleted: (record as any).isDeleted,
@@ -562,5 +532,5 @@ export async function loadMembersFromDB(key: Uint8Array): Promise<FamilyMember[]
     });
   }
 
-  return members;
+  return dropUnreadable(members, 'members');
 }
