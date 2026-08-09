@@ -496,22 +496,42 @@ export async function purchasePlus(): Promise<boolean> {
     // iOS ignores subscriptionOffers entirely and keys off `apple.sku`.
     const googleOffers = await resolveAndroidOffers(iap);
 
+    // Store events emitted while no JS listener was attached are buffered
+    // natively and flushed to the first listener that attaches, so the first
+    // event seen here is not necessarily the one just requested.
+    //
+    // On the SUCCESS side, acting on a stranger's event finishes the wrong
+    // transaction, grants a record whose productId fails computeIsPlus, and
+    // still returns true — a silent no-unlock — while the real purchase lands
+    // after both listeners are gone, never gets finishTransaction, and Play
+    // auto-refunds it in ~3 days. On the ERROR side the same flush rejects the
+    // real purchase, with the identical never-finished consequence.
+    //
+    // The predicate is deliberately asymmetric: skip only events that name a
+    // DIFFERENT product. An event carrying no identity at all settles the
+    // promise exactly as it did before. A strict `!== PLUS_PRODUCT_ID` would
+    // hang forever on one — and PurchaseError.productId is optional and
+    // nullable (types.d.ts:1319-1320), which is precisely the shape a user
+    // cancellation arrives in. Hanging leaves `busy: true` stuck with no alert
+    // and no way out but an app restart.
+    const names = (x: any): string[] =>
+      [x?.productId, ...(x?.ids ?? []), ...(x?.productIds ?? [])].filter(
+        (v): v is string => typeof v === 'string' && v.length > 0,
+      );
+    const isSomeoneElses = (x: any) => {
+      const n = names(x);
+      return n.length > 0 && !n.includes(PLUS_PRODUCT_ID);
+    };
+
     const purchase = await new Promise<IapPurchase>((resolve, reject) => {
       const okSub = iap.purchaseUpdatedListener((p: any) => {
-        // Only OUR product. Purchase events emitted while no JS listener was
-        // attached are buffered natively and flushed to the first listener that
-        // attaches, so the first event seen here is not necessarily the one
-        // just requested. Resolving on it would finish the WRONG transaction,
-        // grant a record whose productId fails computeIsPlus, and still return
-        // true — a silent no-unlock — while the real purchase arrives after
-        // both listeners are gone and never gets finishTransaction, which Play
-        // auto-refunds. Ignore and keep waiting.
-        if (p?.productId !== PLUS_PRODUCT_ID) return;
+        if (isSomeoneElses(p)) return;
         okSub.remove();
         errSub.remove();
         resolve(p as IapPurchase);
       });
       const errSub = iap.purchaseErrorListener((e: any) => {
+        if (isSomeoneElses(e)) return;
         okSub.remove();
         errSub.remove();
         reject(new Error(e?.message ?? e?.code ?? 'purchase failed'));

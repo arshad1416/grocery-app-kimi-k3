@@ -4,13 +4,8 @@
  *
  * Run: node plugins/__checks__/release-config.check.js
  *
- * NOT WIRED UP YET — this needs two lines in files outside this work item's owned
- * paths, and until they land nothing runs this and nothing goes red on a revert:
- *
- *   GroceryApp/package.json  scripts:
- *     "check:release": "node plugins/__checks__/release-config.check.js"
- *   .github/workflows/ci.yml  client job, alongside the jest step:
- *     - run: npm run check:release
+ * WIRED UP: `npm run check:release` (GroceryApp/package.json), invoked by CI at
+ * .github/workflows/ci.yml:104 alongside the jest step. A revert goes red.
  *
  * Deliberately NOT a jest test and deliberately not wired in via jest.config.js:
  * that config pins `roots: ['<rootDir>/__tests__']` AND `testMatch: ['**\/*.test.ts']`,
@@ -23,6 +18,17 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+/**
+ * Read a file that lives OUTSIDE the app package (the owner-facing docs at the
+ * repo root). A bare read would surface a checkout-layout problem as a cryptic
+ * ENOENT attributed to content drift, which is a different and much more
+ * alarming diagnosis than "that file isn't here".
+ */
+const readDoc = (p) => {
+  const full = path.join(root, p);
+  assert(fs.existsSync(full), `${p} not found at ${full} — expected it at the repo root`);
+  return fs.readFileSync(full, 'utf8');
+};
 const readJson = (p) => JSON.parse(read(p));
 
 const checks = [];
@@ -374,7 +380,7 @@ check('N1: the handoff names the exact base plan ID the code matches on', () => 
   const src = read('src/config/entitlements.ts');
   const m = src.match(/PLUS_BASE_PLAN_ID\s*=\s*'([^']+)'/);
   assert(m, 'PLUS_BASE_PLAN_ID not found in src/config/entitlements.ts');
-  const handoff = read('../audit-package/08-SUBMISSION-HANDOFF.md');
+  const handoff = readDoc('../audit-package/08-SUBMISSION-HANDOFF.md');
   // Match the "Base plan ID" table ROW, not the whole file. A bare substring
   // search passes on any ID the doc merely mentions — and the doc lists several
   // WRONG names as cautionary examples, so a code-only rename to one of those
@@ -391,7 +397,7 @@ check('N1: the handoff names the exact base plan ID the code matches on', () => 
 
 check('N1: no doc still claims Play resolves the offer without a token', () => {
   for (const f of ['../audit-package/08-SUBMISSION-HANDOFF.md', '../GOAL_PROMPT_NOTES.md']) {
-    const body = read(f);
+    const body = readDoc(f);
     // The retraction quotes the false claim on purpose, so only flag it when it
     // appears as live instruction rather than inside the correction.
     const live = body

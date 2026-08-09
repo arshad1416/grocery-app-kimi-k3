@@ -317,6 +317,113 @@ describe('purchasePlus passes the resolved token to the store', () => {
     expect(sent[0].offerToken).not.toBe('');
   });
 
+});
+
+/** Builds a purchasePlus harness whose store events the test drives by hand. */
+async function harness() {
+  jest.resetModules();
+  const finishTransaction = jest.fn(async () => undefined);
+  let onPurchase: ((p: unknown) => void) | undefined;
+  let onError: ((e: unknown) => void) | undefined;
+
+  jest.doMock('react-native-iap', () => ({
+    initConnection: async () => true,
+    endConnection: async () => true,
+    fetchProducts: async () => [
+      {
+        id: 'pantryrun_plus_annual',
+        productStatusAndroid: 'ok',
+        subscriptionOfferDetailsAndroid: [
+          { basePlanId: 'annual', offerId: null, offerToken: 'TOK' },
+        ],
+      },
+    ],
+    requestPurchase: jest.fn(async () => undefined),
+    purchaseUpdatedListener: (cb: (p: unknown) => void) => {
+      onPurchase = cb;
+      return { remove: () => {} };
+    },
+    purchaseErrorListener: (cb: (e: unknown) => void) => {
+      onError = cb;
+      return { remove: () => {} };
+    },
+    finishTransaction,
+  }));
+  jest.doMock('react-native', () => ({ Platform: { OS: 'android' } }));
+
+  const mod = await import('../src/config/entitlements');
+  const pending = mod.purchasePlus();
+  await new Promise((r) => setTimeout(r, 0));
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  return {
+    pending,
+    finishTransaction,
+    settle,
+    emit: (p: unknown) => onPurchase?.(p),
+    fail: (e: unknown) => onError?.(e),
+  };
+}
+
+describe('buffered store events must not settle the wrong purchase', () => {
+  it('ignores a buffered ERROR for a different product', async () => {
+    // The mirror of the success case, and the same money bug: rejecting here
+    // tears down both listeners, so the real purchase lands unheard, never
+    // gets finishTransaction, and Play auto-refunds it in ~3 days.
+    const h = await harness();
+    h.fail({ productId: 'some_other_sku', code: 'E_UNKNOWN', message: 'stale' });
+    await h.settle();
+
+    h.emit({ productId: 'pantryrun_plus_annual', purchaseToken: 'tok', transactionId: 't1' });
+    await expect(h.pending).resolves.toBe(true);
+    expect(h.finishTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT hang on an event that names no product', async () => {
+    // PurchaseError.productId is optional and nullable (types.d.ts:1319), and a
+    // user cancellation typically arrives with none. A strict equality guard
+    // would drop it, leaving the promise unsettled, `busy: true` stuck, no
+    // alert, and no recovery short of restarting the app.
+    const h = await harness();
+    h.fail({ code: 'E_USER_CANCELLED', message: 'User cancelled' });
+    await expect(h.pending).resolves.toBe(false);
+  });
+
+  it('matches on the ids array too, not just productId', async () => {
+    const h = await harness();
+    h.emit({ ids: ['pantryrun_plus_annual'], purchaseToken: 'tok', transactionId: 't2' });
+    await expect(h.pending).resolves.toBe(true);
+    expect(h.finishTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads ids when it is the ONLY identity, and skips a stranger named there', async () => {
+    // The positive case above cannot prove `ids` is consulted at all: with no
+    // productId the event carries no identity the narrow version can see, so
+    // the deliberate "settle rather than hang" fallback resolves it either way.
+    // Restricting the identity lookup to productId kept that test green.
+    // THIS is the discriminating case — a foreign product named only in `ids`
+    // must be skipped, which is impossible unless `ids` is actually read.
+    const h = await harness();
+    h.emit({ ids: ['some_other_sku'], purchaseToken: 'stale', transactionId: 'x' });
+    await h.settle();
+    expect(h.finishTransaction).not.toHaveBeenCalled();
+
+    h.emit({ productId: 'pantryrun_plus_annual', purchaseToken: 'tok', transactionId: 't3' });
+    await expect(h.pending).resolves.toBe(true);
+    expect(h.finishTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads productIds on errors, which is where PurchaseError carries them', async () => {
+    // PurchaseError has productIds, not ids (types.d.ts:1320).
+    const h = await harness();
+    h.fail({ productIds: ['some_other_sku'], code: 'E_UNKNOWN', message: 'stale' });
+    await h.settle();
+
+    h.emit({ productId: 'pantryrun_plus_annual', purchaseToken: 'tok', transactionId: 't4' });
+    await expect(h.pending).resolves.toBe(true);
+  });
+});
+
+describe('purchasePlus passes the resolved token to the store (cont.)', () => {
   it('ignores a buffered purchase for a DIFFERENT product instead of finishing it', async () => {
     jest.resetModules();
 
