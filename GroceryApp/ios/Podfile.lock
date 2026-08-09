@@ -31,9 +31,9 @@ PODS:
     - Yoga
   - ExpoAsset (56.0.15):
     - ExpoModulesCore
-  - ExpoCamera (56.0.8):
+  - ExpoCamera (56.0.7):
     - ExpoModulesCore
-  - ExpoCameraBarcodeScanning (56.0.8):
+  - ExpoCameraBarcodeScanning (56.0.7):
     - ExpoCamera
   - ExpoDevice (56.0.4):
     - ExpoModulesCore
@@ -77,7 +77,7 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
-  - ExpoModulesJSI (56.0.12):
+  - ExpoModulesJSI (56.0.7):
     - React-Core
     - ReactCommon
   - ExpoModulesWorklets (56.0.14):
@@ -2490,8 +2490,8 @@ SPEC CHECKSUMS:
   EXConstants: e836b478e4f5c835f3c77921d8162e1918e2c06e
   Expo: c82930e1c8b6f2e26308e364499773d3de12d55d
   ExpoAsset: c2e7b5ba1fe75be683282d6264e38fd7cd8defbb
-  ExpoCamera: 68008452cc12ad5ad5d46cc7c835073228c008da
-  ExpoCameraBarcodeScanning: 2acb6385fe6aa7563da5241c775092aac40195ce
+  ExpoCamera: fc1d2688e9824984e28cf606062da40d2d80b13e
+  ExpoCameraBarcodeScanning: a6a8781886a0cf5ebe78184dcc895c0c88e1b8b5
   ExpoDevice: f527f8bbefa6efa12f8ef63e9038dd1d5d903697
   ExpoDomWebView: 27205be8754f9992913b8a9a08e65019f2207075
   ExpoFileSystem: d730a1cb33f2c91dec01561f0d710054fda32ae9
@@ -2502,7 +2502,7 @@ SPEC CHECKSUMS:
   ExpoLinking: 82458b046854a5802092a37a5228a8a228f928a4
   ExpoLogBox: 7aa03244fe5eeced5129e4ec7ad5bd9a3994378e
   ExpoModulesCore: 31bcf4a3cb9972133237d326a72f86b9077cddac
-  ExpoModulesJSI: e62656cfaffb5aeb3fdc1dd2bc49f77e87ed2261
+  ExpoModulesJSI: f25a013ea9a79904bdd535e4bea0872e155cde09
   ExpoModulesWorklets: 3f847eb6ba544bd4b55d585f89b3b18f8cd73a72
   ExpoNotifications: 261ea4618d5e266647dd7c294a78a38e7f92131c
   ExpoSecureStore: f1bd083c1b7b8d4142013ffcc0082d377d9f49f4
