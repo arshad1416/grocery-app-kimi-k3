@@ -149,6 +149,33 @@ function stripRemovedFields(settings: Record<string, unknown>): boolean {
 }
 
 /**
+ * One-shot: re-prompt users to write down their recovery phrase, because the
+ * words they already wrote down no longer work.
+ *
+ * Every phrase produced before the BIP39 wordlist was corrected encodes
+ * against a 2042-word list that shared only 401 of 2048 positions with the
+ * real one, so no build will accept those words back. The seed was always
+ * intact, so getStoredRecoveryPhrase now derives a correct phrase — but a
+ * user who already tapped "I've Stored It Safely" never sees the banner again
+ * (HomeScreen.tsx:173) and would never learn their backup is dead paper.
+ *
+ * Clearing the acknowledgement is the whole fix: the banner reappears once,
+ * they look, they copy the new words. Guarded by its own marker so it happens
+ * exactly once and a user who re-acknowledges is not nagged forever.
+ *
+ * Returns true if anything changed, so the caller re-persists.
+ */
+function resetRecoveryAcknowledgementOnce(settings: Record<string, unknown>): boolean {
+  if (settings.recoveryPhraseWordlistReprompt === true) return false;
+  settings.recoveryPhraseWordlistReprompt = true;
+  // Nothing to re-prompt if they never acknowledged in the first place — the
+  // banner is already showing.
+  if (settings.recoveryPhraseAcknowledged !== true) return true;
+  settings.recoveryPhraseAcknowledged = false;
+  return true;
+}
+
+/**
  * Initialize the settings store. Must be called once at app startup.
  * Loads settings from secure store into cache, or populates defaults.
  */
@@ -159,10 +186,16 @@ export async function initSettings(): Promise<AppSettings> {
   if (loaded) {
     // Migration: purge Turso credentials persisted by earlier versions.
     const migrated = stripRemovedFields(loaded as unknown as Record<string, unknown>);
+    // Re-prompt for the recovery phrase once: the old wordlist made every
+    // previously written-down phrase undecodable.
+    const reprompt = resetRecoveryAcknowledgementOnce(
+      loaded as unknown as Record<string, unknown>,
+    );
     settingsCache = { ...DEFAULT_SETTINGS, ...loaded };
-    if (migrated) {
+    if (migrated || reprompt) {
       await persistSettings(settingsCache);
-      console.log('[settings] ✓ Purged removed Turso fields from stored settings');
+      if (migrated) console.log('[settings] ✓ Purged removed Turso fields from stored settings');
+      if (reprompt) console.log('[settings] ✓ Recovery-phrase re-prompt armed (wordlist fix)');
     }
     console.log('[settings] ✓ Settings loaded (merged with defaults)');
     return { ...settingsCache };

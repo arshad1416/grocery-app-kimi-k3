@@ -14,20 +14,29 @@
 import { describe, it, expect, beforeAll } from '@jest/globals';
 import type { FamilyInviteToken, DeviceKeypair } from '../src/types';
 
+import {
+  entropyToWordIndices,
+  wordIndicesToEntropy,
+  verifyRecoveryPhrase,
+  BIP39_WORDLIST,
+} from '../src/identity/recovery';
+
 // ─── BIP39 Wordlist Validation ──────────────────────────────────────────────
 
 /**
- * BIP39 English wordlist excerpt — the first 256 words and key terms needed for testing.
- * Full wordlist contains 2048 words; this subset is sufficient for structural tests.
+ * The REAL wordlist the app uses — not a stand-in.
+ *
+ * This was previously a hand-typed 42-word Set described as "the first 256
+ * words and key terms needed for testing… sufficient for structural tests".
+ * It was not sufficient, and it is the direct reason a defect survived from
+ * this repository's first commit through a full audit: the shipped array held
+ * 2042 words while every assertion here checked a different, correct list.
+ * The tests could not fail no matter what the app actually contained.
+ *
+ * A test that substitutes its own copy of the data under test proves only
+ * that the copy is self-consistent. Import the real thing.
  */
-const BIP39_WORDLIST_SUBSET = new Set([
-  'abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract',
-  'absurd', 'abuse', 'access', 'accident', 'account', 'accuse', 'achieve', 'acid',
-  'acoustic', 'acquire', 'across', 'act', 'action', 'actor', 'actress', 'actual',
-  'adapt', 'add', 'addict', 'address', 'adjust', 'admit', 'adult', 'advance',
-  'advice', 'aerobic', 'affair', 'afford', 'afraid', 'again', 'age', 'agent',
-  'zone', 'zoo',
-]);
+const BIP39_WORDLIST_SUBSET = new Set(BIP39_WORDLIST);
 
 // ─── Round-trip: recover(generate(k)) === k ─────────────────────────────────
 
@@ -41,7 +50,6 @@ const BIP39_WORDLIST_SUBSET = new Set([
  * Uses deterministic entropy values (no randomness) to prove the
  * encode/decode cycle is lossless and checksum-verified.
  */
-import { entropyToWordIndices, wordIndicesToEntropy } from '../src/identity/recovery';
 
 describe('L7: BIP39 Round-trip — recover(generate(k)) === k', () => {
   beforeAll(async () => {
@@ -221,7 +229,7 @@ describe('AC-13a: generateRecoveryPhrase — Valid 12-word Phrase', () => {
       expect(BIP39_WORDLIST_SUBSET.has(w)).toBe(true);
     }
     // Words should be from the valid range
-    const indices = words.map((w) => Array.from(BIP39_WORDLIST_SUBSET).indexOf(w));
+    const indices = words.map((w) => BIP39_WORDLIST.indexOf(w));
     for (const idx of indices) {
       expect(idx).toBeGreaterThanOrEqual(0);
       // Index should be < 2048
@@ -311,8 +319,28 @@ describe('AC-13c: verifyRecoveryPhrase — Reject Invalid Phrases', () => {
 });
 
 describe('AC-13d: verifyRecoveryPhrase — Reject Words Not in BIP39 Wordlist', () => {
-  it('rejects non-BIP39 word "hello"', () => {
+  it('accepts "hello", which IS a real BIP39 word', () => {
+    // This test used to assert the opposite, and passed — against a hand-typed
+    // 42-word stand-in that happened not to include 'hello'. It is word 869 of
+    // the canonical list. The assertion was simply false about its own domain,
+    // and nothing could tell, because the list it checked was not the list the
+    // app used. Kept, inverted, as the marker of what substituting your own
+    // copy of the data under test buys you.
     const phrase = 'hello ability able about above absent absorb abstract absurd abuse access accident';
+    expect(BIP39_WORDLIST).toContain('hello');
+    expect(phrase.split(' ').every((w) => BIP39_WORDLIST.includes(w))).toBe(true);
+
+    // The local helper below only checks count and membership, so it accepts
+    // this. The REAL verifyRecoveryPhrase also checks the 4-bit checksum and
+    // rejects it — which is the behaviour that actually protects a user, and
+    // the reason assertions in this file should be aimed at the real function.
+    expect(validateRecoveryPhrase(phrase)).toBe(true);
+    expect(verifyRecoveryPhrase(phrase)).toBe(false);
+  });
+
+  it('rejects non-BIP39 word "qwerty"', () => {
+    const phrase = 'qwerty ability able about above absent absorb abstract absurd abuse access accident';
+    expect(BIP39_WORDLIST).not.toContain('qwerty');
     expect(validateRecoveryPhrase(phrase)).toBe(false);
   });
 

@@ -198,6 +198,12 @@ export interface AppSettings {
    * the user actually acknowledges, unlike the contributeConsentShown flow.
    */
   recoveryPhraseAcknowledged?: boolean;
+  /**
+   * Marks that the one-shot re-prompt for the BIP39 wordlist correction has
+   * run. Set once, never cleared — it exists only so the reset happens exactly
+   * once per install. See resetRecoveryAcknowledgementOnce in config/settings.
+   */
+  recoveryPhraseWordlistReprompt?: boolean;
   /** Separate pool server URL for contribution transport isolation */
   poolUrl?: string;
 

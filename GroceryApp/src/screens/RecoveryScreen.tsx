@@ -25,6 +25,7 @@ import {
   verifyRecoveryPhrase,
   hasRecoveryPhrase,
   getStoredRecoveryPhrase,
+  RecoveryOverwriteError,
 } from '../identity/recovery';
 import { setupMasterKey, getMasterKey } from '../crypto/index';
 import { updateSettings } from '../config/settings';
@@ -47,6 +48,42 @@ export default function RecoveryScreen({ navigation, route }: Props) {
   const [recovering, setRecovering] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [validationError, setValidationError] = useState('');
+
+  /**
+   * Run recovery, surfacing the one failure that is NOT safe to retry blindly.
+   *
+   * A wrong phrase whose 4-bit checksum happens to pass decodes to wrong
+   * entropy and a wrong key, and writing that key orphans everything already
+   * encrypted under the real one — while showing "Recovery Successful".
+   * recoverFromPhrase refuses that overwrite; here we ask, once, explicitly.
+   *
+   * Returns null when the user declines, which is a cancellation rather than
+   * a failure and must not be reported as one.
+   */
+  const runRecovery = useCallback(
+    async (trimmed: string, allowOverwrite: boolean): Promise<Uint8Array | null> => {
+      try {
+        return await recoverFromPhrase(trimmed, { allowOverwrite });
+      } catch (err) {
+        if (err instanceof RecoveryOverwriteError && !allowOverwrite) {
+          const confirmed = await new Promise<boolean>((resolve) => {
+            Alert.alert('Replace this device\u2019s key?', err.message, [
+              { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+              {
+                text: 'Replace',
+                style: 'destructive',
+                onPress: () => resolve(true),
+              },
+            ]);
+          });
+          if (!confirmed) return null;
+          return await recoverFromPhrase(trimmed, { allowOverwrite: true });
+        }
+        throw err;
+      }
+    },
+    [],
+  );
 
   // Load phrase on mount (show mode)
   useEffect(() => {
@@ -122,9 +159,10 @@ export default function RecoveryScreen({ navigation, route }: Props) {
     setValidationError('');
 
     try {
-      const masterKey = await recoverFromPhrase(trimmed);
+      const masterKey = await runRecovery(trimmed, false);
       if (!masterKey) {
-        throw new Error('Failed to recover master key from phrase');
+        // Cancelled at the overwrite confirmation — not an error, not a success.
+        return;
       }
 
       // Now that the key exists, hydrate/connect sync immediately (also runs
