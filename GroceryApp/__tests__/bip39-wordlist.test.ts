@@ -135,6 +135,59 @@ describe('every index the encoder can emit maps to a real word', () => {
   });
 });
 
+describe('official BIP-0039 test vectors', () => {
+  /**
+   * The Trezor vectors, which are the reference implementation's own. These
+   * pin the WHOLE codec — wordlist, bit packing, and the 4-bit checksum — to
+   * the spec, not merely to itself. A round-trip test proves this app can read
+   * back what it wrote; only these prove anyone ELSE can, which is the actual
+   * promise a BIP39 phrase makes to a user.
+   *
+   * Under the old 2042-word list every one of these produced a wrong phrase.
+   */
+  const VECTORS: ReadonlyArray<readonly [string, string]> = [
+    [
+      '00000000000000000000000000000000',
+      'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+    ],
+    [
+      '7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f',
+      'legal winner thank year wave sausage worth useful legal winner thank yellow',
+    ],
+    [
+      '80808080808080808080808080808080',
+      'letter advice cage absurd amount doctor acoustic avoid letter advice cage above',
+    ],
+    ['ffffffffffffffffffffffffffffffff', 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong'],
+    [
+      '9e885d952ad362caeb4efe34a8e91bd2',
+      'ozone drill grab fiber curtain grace pudding thank cruise elder eight picnic',
+    ],
+    [
+      '0c1e24e5917779d297e14d45f14e1a1a',
+      'army van defense carry jealous true garbage claim echo media make crunch',
+    ],
+  ];
+
+  const fromHex = (hex: string) =>
+    new Uint8Array(hex.match(/../g)!.map((h) => parseInt(h, 16)));
+
+  for (const [hex, expected] of VECTORS) {
+    it(`encodes ${hex.slice(0, 8)}… to the phrase the spec specifies`, () => {
+      const phrase = entropyToWordIndices(fromHex(hex))
+        .map((i) => BIP39_WORDLIST[i])
+        .join(' ');
+      expect(phrase).toBe(expected);
+    });
+
+    it(`decodes the spec phrase for ${hex.slice(0, 8)}… back to its entropy`, () => {
+      const indices = expected.split(' ').map((w) => BIP39_WORDLIST.indexOf(w));
+      expect(indices).not.toContain(-1);
+      expect(Array.from(wordIndicesToEntropy(indices))).toEqual(Array.from(fromHex(hex)));
+    });
+  }
+});
+
 describe('the bounds guard is derived from the list, not a literal', () => {
   it('rejects an index one past the end', () => {
     expect(() => wordIndicesToEntropy(new Array(12).fill(BIP39_WORDLIST.length))).toThrow(
