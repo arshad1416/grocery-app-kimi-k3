@@ -67,14 +67,21 @@ export default function RecoveryScreen({ navigation, route }: Props) {
       } catch (err) {
         if (err instanceof RecoveryOverwriteError && !allowOverwrite) {
           const confirmed = await new Promise<boolean>((resolve) => {
-            Alert.alert('Replace this device\u2019s key?', err.message, [
-              { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-              {
-                text: 'Replace',
-                style: 'destructive',
-                onPress: () => resolve(true),
-              },
-            ]);
+            Alert.alert(
+              'Replace this device\u2019s key?',
+              err.message,
+              [
+                { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+                { text: 'Replace', style: 'destructive', onPress: () => resolve(true) },
+              ],
+              // Without onDismiss, an Android dialog that is dismissed without
+              // a button press — which happens when the fragment was queued
+              // while the app was backgrounded and is later shown with the
+              // default cancelable=true — resolves nothing. The promise never
+              // settles, `finally` never runs, and the screen spins forever
+              // with no way out but restarting the app.
+              { cancelable: false, onDismiss: () => resolve(false) },
+            );
           });
           if (!confirmed) return null;
           return await recoverFromPhrase(trimmed, { allowOverwrite: true });

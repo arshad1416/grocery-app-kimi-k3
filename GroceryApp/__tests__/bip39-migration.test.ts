@@ -203,10 +203,14 @@ describe('recoverFromPhrase refuses to silently orphan an existing key', () => {
     expect(key.length).toBe(32);
   });
 
-  it('does NOT block the join flow, where overwriting is correct', async () => {
-    // A device that provisioned its own family-of-one carries type 'device'
-    // and must be able to join a real family. Guarding on "a key exists"
-    // instead of on its TYPE would break this.
+  it('also guards a first-run "device" key — the path that actually matters', async () => {
+    // THE REACHABILITY TEST. An earlier version of this guard additionally
+    // required existingType === 'recovery', which made it unreachable exactly
+    // where restores happen: sync/bootstrap tags a first-run device 'device',
+    // and PairingScreen routes every new joiner straight into recovery. So
+    // the population the guard was written to protect never met the
+    // condition. Destroying a 'device' key orphans that device's lists just
+    // as thoroughly as destroying a 'recovery' one.
     const familyPhrase = await generateRecoveryPhrase();
     const familyKey = await getMasterKey();
 
@@ -217,8 +221,34 @@ describe('recoverFromPhrase refuses to silently orphan an existing key', () => {
     await setMasterKeyType('device');
     expect(await getMasterKeyType()).toBe('device');
 
-    const recovered = await recoverFromPhrase(familyPhrase);
+    await expect(recoverFromPhrase(familyPhrase)).rejects.toThrow(RecoveryOverwriteError);
+    // …and the wording must fit a device key, not talk about a phrase the
+    // user never entered.
+    await expect(recoverFromPhrase(familyPhrase)).rejects.toThrow(/already has its own lists/);
+    await expect(recoverFromPhrase(familyPhrase)).rejects.toThrow(/joining a family/);
+
+    // Confirmed, the join proceeds and lands on the real family key.
+    const recovered = await recoverFromPhrase(familyPhrase, { allowOverwrite: true });
     expect(Array.from(recovered)).toEqual(Array.from(familyKey!));
+  });
+
+  it('says "recovery phrase" only when the key really came from one', async () => {
+    const phrase = await generateRecoveryPhrase();
+    await recoverFromPhrase(phrase);
+    expect(await getMasterKeyType()).toBe('recovery');
+
+    const other = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
+    await expect(recoverFromPhrase(other)).rejects.toThrow(/restored from a recovery phrase/);
+  });
+
+  it('does not fire when the same phrase is re-entered', async () => {
+    // wouldChangeKey must exclude the harmless case, or every Settings →
+    // Recover retry raises a destructive-sounding dialog.
+    const phrase = await generateRecoveryPhrase();
+    const key = await getMasterKey();
+
+    const again = await recoverFromPhrase(phrase);
+    expect(Array.from(again)).toEqual(Array.from(key!));
   });
 
   it('does not block a first-ever restore, where no key exists', async () => {

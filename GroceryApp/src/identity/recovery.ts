@@ -372,18 +372,35 @@ export const BIP39_WORDLIST: readonly string[] = [
  * The nine words that appeared in this app's old 2042-word list but are NOT in
  * canonical BIP39. Seeing one proves a phrase was written under the old build.
  *
- * This is a DIAGNOSTIC, never a decoder. It is deliberately not enough
- * information to decode an old phrase, and that is the point: the 4-bit
- * checksum accepts a wrong 12-word phrase about 1 time in 16, so a decoder
- * that guessed which list to use would hand back a silently wrong master key
- * ~5.7% of the time (measured over 300k seeds; correct entropy recovered in
- * zero cases). A wrong key here is unrecoverable and looks like success, so
+ * This is a DIAGNOSTIC, never a decoder — a deliberate product decision, and
+ * the honest accounting is this (all figures measured over 200k+ seeds
+ * against both real lists):
+ *
+ *   What ships (canonical only): an old-list phrase is silently accepted
+ *     5.76% of the time and recovers the correct entropy in ZERO cases. The
+ *     rest fail loudly.
+ *   A canonical-first, legacy-fallback decoder: WOULD correctly recover
+ *     90.7% of old-list phrases. Its cost is that garbled input gets easier
+ *     to accept — a one-word substitution false-accepts 6.1% -> 11.4%
+ *     (1.85x) — and that cost is permanent, paid by every future user, while
+ *     the benefit expires with the pre-fix cohort.
+ *
+ * An earlier version of this comment cited the 5.76%/zero-correct figure as
+ * the cost of the fallback. That was wrong: it is the cost of what shipped.
+ * The decision still stands, but on its real grounds — the affected cohort is
+ * bounded by a closed-beta window, the phrase is derived on read so anyone
+ * with a working device self-heals, and a permanent halving of typo
+ * resistance is a poor trade for a population that expires. If that cohort
+ * turns out to be non-trivial, adding the fallback is ~6 lines plus the old
+ * array, and this comment is the record of what it would buy.
+ *
+ * Nine strings and not the whole 2042-word array, because a diagnostic only
+ * needs to recognise, not decode. A wrong key here is unrecoverable and looks like success, so
  * the only safe move is to refuse and say something useful.
  *
- * Nine strings rather than the whole 2042-word array because this can only
- * ever prove the ~5% of old phrases that happen to contain one. The other 95%
- * fail the checksum and are indistinguishable from a typo — no amount of
- * embedded data changes that.
+ * It fires for the ~5% of old phrases that contain one of these words. Of the
+ * rest, ~86% fail the checksum and read as a typo, and 5.76% are accepted
+ * with a wrong key — so this is a partial mitigation, not a safety net.
  */
 const LEGACY_ONLY_WORDS: ReadonlySet<string> = new Set([
   'embryo', 'emperor', 'exceed', 'foreign', 'player',
@@ -718,12 +735,30 @@ export async function recoverFromPhrase(
     (existingKey.length !== masterKey.length ||
       existingKey.some((b, i) => b !== masterKey[i]));
 
-  const existingType = await getMasterKeyType();
-  if (wouldChangeKey && existingType === 'recovery' && !allowOverwrite) {
+  // Any key change, not only one over a 'recovery'-tagged key. An earlier
+  // version also required existingType === 'recovery', which made the guard
+  // unreachable on the path that actually matters: a first-run device is
+  // tagged 'device' by sync/bootstrap.ts, and PairingScreen routes every new
+  // joiner straight into recovery, so the population the guard exists to
+  // protect never met the condition. Whether the key being destroyed came
+  // from a phrase or from first-run provisioning does not change that
+  // destroying it orphans everything encrypted under it.
+  //
+  // Not gated on merely HAVING a key — `wouldChangeKey` above already
+  // excludes re-entering the same phrase, which is the common, harmless case
+  // and must not raise a dialog.
+  if (wouldChangeKey && !allowOverwrite) {
+    const existingType = await getMasterKeyType();
     throw new RecoveryOverwriteError(
-      'This device already holds a key restored from a recovery phrase. ' +
-        'Restoring again would permanently orphan everything encrypted under ' +
-        'it. If you are sure this is the right phrase, confirm to continue.',
+      existingType === 'recovery'
+        ? 'This device already holds a key restored from a recovery phrase. ' +
+            'Restoring a different one would permanently orphan everything ' +
+            'encrypted under it. Continue only if you are sure this phrase is ' +
+            'the right one.'
+        : 'This device already has its own lists, encrypted under a key this ' +
+            'phrase would replace. Those lists would be permanently ' +
+            'unreadable. This is expected when joining a family you were ' +
+            'invited to; cancel if you did not mean to.',
     );
   }
 

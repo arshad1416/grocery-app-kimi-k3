@@ -50,6 +50,12 @@ const DEFAULT_SETTINGS: AppSettings = {
   contributeStoreGranularity: 'region',
   contributeConsentShown: false,
   recoveryPhraseAcknowledged: false,
+  // Born migrated: a brand-new install has nothing to re-prompt about. Without
+  // this, the one-shot below fires on the SECOND launch of a fresh install and
+  // clears an acknowledgement the user had just given, for no reason.
+  // Existing installs are unaffected — the migration reads the object loaded
+  // from disk, which predates this default.
+  recoveryPhraseWordlistReprompt: true,
   poolUrl: '',
   theme: 'system',
 };
