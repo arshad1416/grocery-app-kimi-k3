@@ -228,8 +228,11 @@ export async function persistItem(
       await collection.create((record: any) => {
         record._raw.id = item.id;
         record.listId = item.listId;
-        // Stamp the REAL familyId, so new rows are correctly scoped even
-        // though every caller still hands us '' (see LEGACY_FAMILY_IDS).
+        // Stored verbatim and never read back. Nothing keys visibility on
+        // family_id — see the note above loadItemsFromDB for why writing a
+        // real id here would make rows disappear when the familyId
+        // regenerates, which it does on reinstall, unpair-then-invite, and
+        // recovery.
         record.familyId = item.familyId;
         record.name = encryptedName;
         record.quantity = item.quantity;
